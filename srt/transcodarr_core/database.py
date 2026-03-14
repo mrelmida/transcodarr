@@ -1,0 +1,863 @@
+# srt/transcodarr_core/database.py
+"""
+PostgreSQL database for persistent storage of transcode history, media cache, and metadata.
+Designed for concurrent multi-process access (Gunicorn workers, background tasks, etc.)
+"""
+import logging
+import threading
+import time
+from typing import Optional, Dict, List
+from contextlib import contextmanager
+
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
+
+from .config import Settings
+
+# Connection pool (thread-safe)
+_pool: Optional[pool.ThreadedConnectionPool] = None
+_pool_lock = threading.Lock()
+_schema_initialized = False
+
+
+def _get_settings():
+    """Get database settings."""
+    return Settings()
+
+
+def _get_pool() -> pool.ThreadedConnectionPool:
+    """Get or create the connection pool."""
+    global _pool
+
+    if _pool is not None:
+        return _pool
+
+    with _pool_lock:
+        if _pool is not None:
+            return _pool
+
+        settings = _get_settings()
+
+        if not settings.POSTGRES_PASSWORD:
+            raise RuntimeError(
+                "POSTGRES_PASSWORD not set. Please configure PostgreSQL connection in .env:\n"
+                "  POSTGRES_HOST=your-postgres-host\n"
+                "  POSTGRES_PORT=5432\n"
+                "  POSTGRES_DB=transcodarr\n"
+                "  POSTGRES_USER=transcodarr\n"
+                "  POSTGRES_PASSWORD=your-password"
+            )
+
+        logging.info("[DATABASE] Connecting to PostgreSQL at %s:%s/%s",
+                     settings.POSTGRES_HOST, settings.POSTGRES_PORT, settings.POSTGRES_DB)
+
+        _pool = pool.ThreadedConnectionPool(
+            minconn=2,
+            maxconn=20,
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            dbname=settings.POSTGRES_DB,
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            connect_timeout=30,
+        )
+
+        logging.info("[DATABASE] PostgreSQL connection pool created")
+        return _pool
+
+
+def get_connection():
+    """Get a connection from the pool."""
+    _ensure_initialized()
+    return _get_pool().getconn()
+
+
+def release_connection(conn):
+    """Return a connection to the pool."""
+    if _pool is not None and conn is not None:
+        _get_pool().putconn(conn)
+
+
+@contextmanager
+def get_cursor():
+    """Context manager for database cursor with auto-commit and connection release."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+    finally:
+        release_connection(conn)
+
+
+def _ensure_initialized():
+    """Ensure database schema is created."""
+    global _schema_initialized
+
+    if _schema_initialized:
+        return
+
+    with _pool_lock:
+        if _schema_initialized:
+            return
+
+        # Get a direct connection for schema creation
+        settings = _get_settings()
+
+        if not settings.POSTGRES_PASSWORD:
+            raise RuntimeError("POSTGRES_PASSWORD not configured")
+
+        conn = psycopg2.connect(
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            dbname=settings.POSTGRES_DB,
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            connect_timeout=30,
+        )
+
+        try:
+            cursor = conn.cursor()
+
+            # Check if schema exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'transcode_history'
+                )
+            """)
+            exists = cursor.fetchone()[0]
+
+            if not exists:
+                logging.info("[DATABASE] Creating schema...")
+                _create_schema(conn)
+                logging.info("[DATABASE] Schema created successfully")
+            else:
+                logging.info("[DATABASE] Schema already exists, checking for migrations...")
+                _run_migrations(conn)
+
+            cursor.close()
+            conn.commit()
+        finally:
+            conn.close()
+
+        _schema_initialized = True
+
+
+def init_database():
+    """Public function to initialize database. Safe to call multiple times."""
+    _ensure_initialized()
+
+
+def _run_migrations(conn):
+    """Run any necessary migrations for existing databases."""
+    cursor = conn.cursor()
+
+    # Migration: Add media_ignore table if it doesn't exist
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'media_ignore'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Creating media_ignore table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS media_ignore (
+                id SERIAL PRIMARY KEY,
+                file_path TEXT UNIQUE NOT NULL,
+                ignored_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+                reason TEXT
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ignore_path ON media_ignore(file_path)")
+        logging.info("[DATABASE] Migration: media_ignore table created")
+
+    # Migration: Add episode_count column to tv_episodes if it doesn't exist
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.columns
+            WHERE table_name = 'tv_episodes' AND column_name = 'episode_count'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Adding episode_count column to tv_episodes...")
+        cursor.execute("ALTER TABLE tv_episodes ADD COLUMN episode_count INTEGER DEFAULT 1")
+        logging.info("[DATABASE] Migration: episode_count column added")
+
+    # Migration: Add settings table if it doesn't exist
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'settings'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Creating settings table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id SERIAL PRIMARY KEY,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT,
+                description TEXT,
+                created_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+                updated_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key)")
+        logging.info("[DATABASE] Migration: settings table created")
+
+    # Migration: Add storage_history table if it doesn't exist
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'storage_history'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Creating storage_history table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS storage_history (
+                id SERIAL PRIMARY KEY,
+                recorded_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+                total_bytes BIGINT NOT NULL,
+                used_bytes BIGINT NOT NULL,
+                free_bytes BIGINT NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_storage_history_time ON storage_history(recorded_at)")
+        logging.info("[DATABASE] Migration: storage_history table created")
+
+    cursor.close()
+    conn.commit()
+
+
+def _create_schema(conn):
+    """Create all tables."""
+    cursor = conn.cursor()
+
+    # Transcode history
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transcode_history (
+            id SERIAL PRIMARY KEY,
+            output_path TEXT UNIQUE NOT NULL,
+            source_path TEXT,
+            source_size BIGINT,
+            processed_at DOUBLE PRECISION,
+            processing_duration DOUBLE PRECISION,
+            copied BOOLEAN DEFAULT FALSE,
+            created_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcode_output ON transcode_history(output_path)")
+
+    # Movies cache
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS movies (
+            id SERIAL PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            title TEXT,
+            year INTEGER,
+            imdb_id TEXT,
+            tmdb_id TEXT,
+            size_gb DOUBLE PRECISION,
+            runtime_min DOUBLE PRECISION,
+            container TEXT,
+            vcodec TEXT,
+            acodec TEXT,
+            resolution TEXT,
+            video_bitrate INTEGER,
+            audio_bitrate INTEGER,
+            total_bitrate INTEGER,
+            frame_rate DOUBLE PRECISION,
+            audio_channels INTEGER,
+            audio_sample_rate INTEGER,
+            mtime BIGINT,
+            status TEXT DEFAULT 'ready',
+            processed_at DOUBLE PRECISION,
+            processing_duration DOUBLE PRECISION,
+            source_size BIGINT,
+            compression_ratio DOUBLE PRECISION,
+            last_scanned DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_movies_path ON movies(path)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_movies_imdb ON movies(imdb_id)")
+
+    # TV Shows (series-level)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tv_shows (
+            id SERIAL PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            title TEXT,
+            imdb_id TEXT,
+            tvdb_id TEXT,
+            tmdb_id TEXT,
+            status TEXT,
+            last_scanned DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shows_path ON tv_shows(path)")
+
+    # TV Episodes cache
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tv_episodes (
+            id SERIAL PRIMARY KEY,
+            path TEXT UNIQUE NOT NULL,
+            show_path TEXT,
+            show TEXT,
+            season INTEGER,
+            episode INTEGER,
+            episode_count INTEGER DEFAULT 1,
+            title TEXT,
+            size_gb DOUBLE PRECISION,
+            runtime_min DOUBLE PRECISION,
+            container TEXT,
+            vcodec TEXT,
+            acodec TEXT,
+            resolution TEXT,
+            video_bitrate INTEGER,
+            audio_bitrate INTEGER,
+            total_bitrate INTEGER,
+            frame_rate DOUBLE PRECISION,
+            audio_channels INTEGER,
+            audio_sample_rate INTEGER,
+            mtime BIGINT,
+            status TEXT DEFAULT 'ready',
+            processed_at DOUBLE PRECISION,
+            processing_duration DOUBLE PRECISION,
+            source_size BIGINT,
+            compression_ratio DOUBLE PRECISION,
+            last_scanned DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+            FOREIGN KEY (show_path) REFERENCES tv_shows(path) ON DELETE SET NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_path ON tv_episodes(path)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_episodes_show ON tv_episodes(show_path)")
+
+    # Media metadata cache
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS media_metadata (
+            id SERIAL PRIMARY KEY,
+            media_type TEXT NOT NULL,
+            imdb_id TEXT,
+            tmdb_id TEXT,
+            tvdb_id TEXT,
+            title TEXT,
+            year INTEGER,
+            description TEXT,
+            genres TEXT,
+            rating DOUBLE PRECISION,
+            poster_url TEXT,
+            backdrop_url TEXT,
+            runtime INTEGER,
+            status TEXT,
+            network TEXT,
+            fetched_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+            source TEXT,
+            UNIQUE(media_type, imdb_id),
+            UNIQUE(media_type, tmdb_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_metadata_imdb ON media_metadata(imdb_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_metadata_tmdb ON media_metadata(tmdb_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_metadata_type ON media_metadata(media_type)")
+
+    # Media ignore list (for main loop to skip)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS media_ignore (
+            id SERIAL PRIMARY KEY,
+            file_path TEXT UNIQUE NOT NULL,
+            ignored_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+            reason TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ignore_path ON media_ignore(file_path)")
+
+    # Runtime settings (replaces .env for configurable settings)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            id SERIAL PRIMARY KEY,
+            key TEXT UNIQUE NOT NULL,
+            value TEXT,
+            description TEXT,
+            created_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+            updated_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key)")
+
+    # Storage history (system stats)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS storage_history (
+            id SERIAL PRIMARY KEY,
+            recorded_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+            total_bytes BIGINT NOT NULL,
+            used_bytes BIGINT NOT NULL,
+            free_bytes BIGINT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_storage_history_time ON storage_history(recorded_at)")
+
+    cursor.close()
+    conn.commit()
+
+
+# ============================================================
+# Transcode History Functions
+# ============================================================
+
+def add_transcode_history(output_path: str, source_path: str, source_size: int,
+                          processing_duration: float = None, copied: bool = False) -> None:
+    """Add or update transcode history entry."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO transcode_history (output_path, source_path, source_size,
+                                           processed_at, processing_duration, copied)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (output_path) DO UPDATE SET
+                source_path = EXCLUDED.source_path,
+                source_size = EXCLUDED.source_size,
+                processed_at = EXCLUDED.processed_at,
+                processing_duration = EXCLUDED.processing_duration,
+                copied = EXCLUDED.copied
+        """, (output_path, source_path, source_size, time.time(), processing_duration, copied))
+    logging.debug("[DATABASE] Added transcode history: %s", output_path)
+
+
+def get_transcode_history(output_path: str) -> Optional[Dict]:
+    """Get transcode history for a specific output path."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM transcode_history WHERE output_path = %s", (output_path,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_transcode_history() -> Dict[str, Dict]:
+    """Get all transcode history as a dict keyed by output_path."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM transcode_history")
+        return {row["output_path"]: dict(row) for row in cursor.fetchall()}
+
+
+# ============================================================
+# Movies Cache Functions
+# ============================================================
+
+def upsert_movie(path: str, data: Dict) -> None:
+    """Insert or update a movie in the cache."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO movies (path, title, year, imdb_id, tmdb_id, size_gb, runtime_min,
+                               container, vcodec, acodec, resolution, video_bitrate, audio_bitrate,
+                               total_bitrate, frame_rate, audio_channels, audio_sample_rate,
+                               mtime, status, processed_at, processing_duration, source_size,
+                               compression_ratio, last_scanned)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (path) DO UPDATE SET
+                title = EXCLUDED.title,
+                year = EXCLUDED.year,
+                imdb_id = EXCLUDED.imdb_id,
+                tmdb_id = EXCLUDED.tmdb_id,
+                size_gb = EXCLUDED.size_gb,
+                runtime_min = EXCLUDED.runtime_min,
+                container = EXCLUDED.container,
+                vcodec = EXCLUDED.vcodec,
+                acodec = EXCLUDED.acodec,
+                resolution = EXCLUDED.resolution,
+                video_bitrate = EXCLUDED.video_bitrate,
+                audio_bitrate = EXCLUDED.audio_bitrate,
+                total_bitrate = EXCLUDED.total_bitrate,
+                frame_rate = EXCLUDED.frame_rate,
+                audio_channels = EXCLUDED.audio_channels,
+                audio_sample_rate = EXCLUDED.audio_sample_rate,
+                mtime = EXCLUDED.mtime,
+                status = EXCLUDED.status,
+                processed_at = EXCLUDED.processed_at,
+                processing_duration = EXCLUDED.processing_duration,
+                source_size = EXCLUDED.source_size,
+                compression_ratio = EXCLUDED.compression_ratio,
+                last_scanned = EXCLUDED.last_scanned
+        """, (
+            path, data.get("title"), data.get("year"), data.get("imdb_id"), data.get("tmdb_id"),
+            data.get("size_gb"), data.get("runtime_min"), data.get("container"),
+            data.get("vcodec"), data.get("acodec"), data.get("resolution"),
+            data.get("video_bitrate"), data.get("audio_bitrate"), data.get("total_bitrate"),
+            data.get("frame_rate"), data.get("audio_channels"), data.get("audio_sample_rate"),
+            data.get("mtime"), data.get("status", "ready"), data.get("processed_at"),
+            data.get("processing_duration"), data.get("source_size"), data.get("compression_ratio"),
+            time.time()
+        ))
+
+
+def get_movie(path: str) -> Optional[Dict]:
+    """Get a movie by path."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM movies WHERE path = %s", (path,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_movies() -> List[Dict]:
+    """Get all movies from cache."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM movies ORDER BY mtime DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_movie(path: str) -> None:
+    """Delete a movie from cache."""
+    with get_cursor() as cursor:
+        cursor.execute("DELETE FROM movies WHERE path = %s", (path,))
+
+
+# ============================================================
+# TV Shows Cache Functions
+# ============================================================
+
+def upsert_tv_show(path: str, data: Dict) -> None:
+    """Insert or update a TV show."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO tv_shows (path, title, imdb_id, tvdb_id, tmdb_id, status, last_scanned)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (path) DO UPDATE SET
+                title = EXCLUDED.title,
+                imdb_id = EXCLUDED.imdb_id,
+                tvdb_id = EXCLUDED.tvdb_id,
+                tmdb_id = EXCLUDED.tmdb_id,
+                status = EXCLUDED.status,
+                last_scanned = EXCLUDED.last_scanned
+        """, (path, data.get("title"), data.get("imdb_id"), data.get("tvdb_id"),
+              data.get("tmdb_id"), data.get("status"), time.time()))
+
+
+def get_tv_show(path: str) -> Optional[Dict]:
+    """Get a TV show by path."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM tv_shows WHERE path = %s", (path,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+# ============================================================
+# TV Episodes Cache Functions
+# ============================================================
+
+def upsert_tv_episode(path: str, data: Dict) -> None:
+    """Insert or update a TV episode in the cache."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO tv_episodes (path, show_path, show, season, episode, title, size_gb,
+                                    runtime_min, container, vcodec, acodec, resolution,
+                                    video_bitrate, audio_bitrate, total_bitrate, frame_rate,
+                                    audio_channels, audio_sample_rate, mtime, status,
+                                    processed_at, processing_duration, source_size,
+                                    compression_ratio, last_scanned)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (path) DO UPDATE SET
+                show_path = EXCLUDED.show_path,
+                show = EXCLUDED.show,
+                season = EXCLUDED.season,
+                episode = EXCLUDED.episode,
+                title = EXCLUDED.title,
+                size_gb = EXCLUDED.size_gb,
+                runtime_min = EXCLUDED.runtime_min,
+                container = EXCLUDED.container,
+                vcodec = EXCLUDED.vcodec,
+                acodec = EXCLUDED.acodec,
+                resolution = EXCLUDED.resolution,
+                video_bitrate = EXCLUDED.video_bitrate,
+                audio_bitrate = EXCLUDED.audio_bitrate,
+                total_bitrate = EXCLUDED.total_bitrate,
+                frame_rate = EXCLUDED.frame_rate,
+                audio_channels = EXCLUDED.audio_channels,
+                audio_sample_rate = EXCLUDED.audio_sample_rate,
+                mtime = EXCLUDED.mtime,
+                status = EXCLUDED.status,
+                processed_at = EXCLUDED.processed_at,
+                processing_duration = EXCLUDED.processing_duration,
+                source_size = EXCLUDED.source_size,
+                compression_ratio = EXCLUDED.compression_ratio,
+                last_scanned = EXCLUDED.last_scanned
+        """, (
+            path, data.get("show_path"), data.get("show"), data.get("season"), data.get("episode"),
+            data.get("title"), data.get("size_gb"), data.get("runtime_min"), data.get("container"),
+            data.get("vcodec"), data.get("acodec"), data.get("resolution"),
+            data.get("video_bitrate"), data.get("audio_bitrate"), data.get("total_bitrate"),
+            data.get("frame_rate"), data.get("audio_channels"), data.get("audio_sample_rate"),
+            data.get("mtime"), data.get("status", "ready"), data.get("processed_at"),
+            data.get("processing_duration"), data.get("source_size"), data.get("compression_ratio"),
+            time.time()
+        ))
+
+
+def get_tv_episode(path: str) -> Optional[Dict]:
+    """Get a TV episode by path."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM tv_episodes WHERE path = %s", (path,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_tv_episodes() -> List[Dict]:
+    """Get all TV episodes from cache."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM tv_episodes ORDER BY mtime DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_tv_episode(path: str) -> None:
+    """Delete a TV episode from cache."""
+    with get_cursor() as cursor:
+        cursor.execute("DELETE FROM tv_episodes WHERE path = %s", (path,))
+
+
+# ============================================================
+# Media Metadata Functions (descriptions, etc.)
+# ============================================================
+
+def upsert_media_metadata(media_type: str, data: Dict) -> None:
+    """Insert or update media metadata (descriptions, etc.)."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO media_metadata (media_type, imdb_id, tmdb_id, tvdb_id, title, year,
+                                       description, genres, rating, poster_url, backdrop_url,
+                                       runtime, status, network, source, fetched_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (media_type, imdb_id) DO UPDATE SET
+                tmdb_id = EXCLUDED.tmdb_id,
+                tvdb_id = EXCLUDED.tvdb_id,
+                title = EXCLUDED.title,
+                year = EXCLUDED.year,
+                description = EXCLUDED.description,
+                genres = EXCLUDED.genres,
+                rating = EXCLUDED.rating,
+                poster_url = EXCLUDED.poster_url,
+                backdrop_url = EXCLUDED.backdrop_url,
+                runtime = EXCLUDED.runtime,
+                status = EXCLUDED.status,
+                network = EXCLUDED.network,
+                source = EXCLUDED.source,
+                fetched_at = EXCLUDED.fetched_at
+        """, (
+            media_type, data.get("imdb_id"), data.get("tmdb_id"), data.get("tvdb_id"),
+            data.get("title"), data.get("year"), data.get("description"), data.get("genres"),
+            data.get("rating"), data.get("poster_url"), data.get("backdrop_url"),
+            data.get("runtime"), data.get("status"), data.get("network"),
+            data.get("source", "unknown"), time.time()
+        ))
+
+
+def get_media_metadata(media_type: str, imdb_id: str = None, tmdb_id: str = None) -> Optional[Dict]:
+    """Get media metadata by IMDB or TMDB ID."""
+    with get_cursor() as cursor:
+        if imdb_id:
+            cursor.execute(
+                "SELECT * FROM media_metadata WHERE media_type = %s AND imdb_id = %s",
+                (media_type, imdb_id)
+            )
+        elif tmdb_id:
+            cursor.execute(
+                "SELECT * FROM media_metadata WHERE media_type = %s AND tmdb_id = %s",
+                (media_type, str(tmdb_id))
+            )
+        else:
+            return None
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_metadata_by_title(media_type: str, title: str, year: int = None) -> Optional[Dict]:
+    """Get media metadata by title (and optionally year)."""
+    with get_cursor() as cursor:
+        if year:
+            cursor.execute(
+                "SELECT * FROM media_metadata WHERE media_type = %s AND title = %s AND year = %s",
+                (media_type, title, year)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM media_metadata WHERE media_type = %s AND title = %s",
+                (media_type, title)
+            )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def close_pool():
+    """Close the connection pool (for graceful shutdown)."""
+    global _pool
+    if _pool is not None:
+        _pool.closeall()
+        _pool = None
+        logging.info("[DATABASE] Connection pool closed")
+
+
+# ============================================================
+# Media Ignore Functions
+# ============================================================
+
+def set_ignored(file_path: str, reason: str = None) -> None:
+    """Mark a file as ignored (main loop will skip it)."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO media_ignore (file_path, ignored_at, reason)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (file_path) DO UPDATE SET
+                ignored_at = EXCLUDED.ignored_at,
+                reason = EXCLUDED.reason
+        """, (file_path, time.time(), reason))
+    logging.info("[DATABASE] Marked as ignored: %s", file_path)
+
+
+def remove_ignored(file_path: str) -> bool:
+    """Remove a file from the ignore list. Returns True if removed."""
+    with get_cursor() as cursor:
+        cursor.execute("DELETE FROM media_ignore WHERE file_path = %s", (file_path,))
+        removed = cursor.rowcount > 0
+    if removed:
+        logging.info("[DATABASE] Removed from ignore list: %s", file_path)
+    return removed
+
+
+def is_ignored(file_path: str) -> bool:
+    """Check if a file is on the ignore list."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT 1 FROM media_ignore WHERE file_path = %s", (file_path,))
+        return cursor.fetchone() is not None
+
+
+def get_all_ignored() -> List[Dict]:
+    """Get all ignored files."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT * FROM media_ignore ORDER BY ignored_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_ignored_paths() -> set:
+    """Get all ignored file paths as a set (for fast lookup)."""
+    with get_cursor() as cursor:
+        cursor.execute("SELECT file_path FROM media_ignore")
+        return {row["file_path"] for row in cursor.fetchall()}
+
+
+# ============================================================
+# Settings Functions (runtime configuration stored in database)
+# ============================================================
+
+def get_setting(key: str, default: str = None) -> Optional[str]:
+    """
+    Get a setting value from the database.
+    Returns default if not found.
+    """
+    try:
+        with get_cursor() as cursor:
+            cursor.execute("SELECT value FROM settings WHERE key = %s", (key,))
+            row = cursor.fetchone()
+            if row:
+                return row["value"]
+            return default
+    except Exception as e:
+        logging.warning("[DATABASE] Failed to get setting %s: %s", key, e)
+        return default
+
+
+def set_setting(key: str, value: str, description: str = None) -> bool:
+    """
+    Set a setting value in the database.
+    Creates the setting if it doesn't exist, updates if it does.
+    Returns True on success.
+    """
+    try:
+        with get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO settings (key, value, description, updated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    description = COALESCE(EXCLUDED.description, settings.description),
+                    updated_at = EXCLUDED.updated_at
+            """, (key, value, description, time.time()))
+        logging.debug("[DATABASE] Set setting %s = %s", key, value[:50] if value else None)
+        return True
+    except Exception as e:
+        logging.error("[DATABASE] Failed to set setting %s: %s", key, e)
+        return False
+
+
+def get_all_settings() -> Dict[str, str]:
+    """Get all settings as a dict."""
+    try:
+        with get_cursor() as cursor:
+            cursor.execute("SELECT key, value FROM settings")
+            return {row["key"]: row["value"] for row in cursor.fetchall()}
+    except Exception as e:
+        logging.warning("[DATABASE] Failed to get all settings: %s", e)
+        return {}
+
+
+def delete_setting(key: str) -> bool:
+    """Delete a setting from the database."""
+    try:
+        with get_cursor() as cursor:
+            cursor.execute("DELETE FROM settings WHERE key = %s", (key,))
+            return cursor.rowcount > 0
+    except Exception as e:
+        logging.error("[DATABASE] Failed to delete setting %s: %s", key, e)
+        return False
+
+
+def bulk_set_settings(settings_dict: Dict[str, str]) -> int:
+    """
+    Set multiple settings at once.
+    Returns number of settings successfully set.
+    """
+    count = 0
+    for key, value in settings_dict.items():
+        if set_setting(key, value if value is not None else ""):
+            count += 1
+    return count
+
+
+# ============================================================
+# Storage History Functions (system stats)
+# ============================================================
+
+def insert_storage_snapshot(total_bytes: int, used_bytes: int, free_bytes: int) -> None:
+    """Insert a storage usage snapshot."""
+    with get_cursor() as cursor:
+        cursor.execute("""
+            INSERT INTO storage_history (recorded_at, total_bytes, used_bytes, free_bytes)
+            VALUES (%s, %s, %s, %s)
+        """, (time.time(), total_bytes, used_bytes, free_bytes))
+
+
+def get_storage_history(since_epoch: float = None) -> List[Dict]:
+    """Get storage history, optionally filtered by time. Returns list of dicts ordered by time ASC."""
+    with get_cursor() as cursor:
+        if since_epoch:
+            cursor.execute(
+                "SELECT recorded_at, total_bytes, used_bytes, free_bytes FROM storage_history WHERE recorded_at >= %s ORDER BY recorded_at ASC",
+                (since_epoch,)
+            )
+        else:
+            cursor.execute(
+                "SELECT recorded_at, total_bytes, used_bytes, free_bytes FROM storage_history ORDER BY recorded_at ASC"
+            )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def prune_storage_history(keep_days: int = 90) -> int:
+    """Delete storage history rows older than keep_days. Returns number of rows deleted."""
+    cutoff = time.time() - (keep_days * 86400)
+    with get_cursor() as cursor:
+        cursor.execute("DELETE FROM storage_history WHERE recorded_at < %s", (cutoff,))
+        return cursor.rowcount

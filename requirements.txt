@@ -1,0 +1,15 @@
+watchdog
+python-dotenv
+flask
+flask-cors
+requests
+ffsubsync
+subliminal
+babelfish
+enzyme
+beautifulsoup4
+chardet
+guessit
+gunicorn
+psycopg2-binary
+psutil

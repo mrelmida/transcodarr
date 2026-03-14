@@ -1,0 +1,276 @@
+# Transcodarr
+
+Automated video transcoding orchestrator for the *arr ecosystem. Watches for new media, transcodes to a universal direct-play format with embedded subtitles, updates Radarr/Sonarr paths, and refreshes your Jellyfin library — all hands-off.
+
+Built for homelabbers who want their entire library in a consistent, streaming-friendly format without manual intervention.
+
+![Media Movies Table](screenshots/screenshot-1.png)
+
+## What It Does
+
+```
+Download Client ──► Watch Folder ──► Transcodarr ──► Output Library
+                                         │
+                        ┌────────────────┼────────────────┐
+                        ▼                ▼                ▼
+                   Fetch Subs      Transcode        Post-Process
+                   (OS.com,       (FFmpeg with      (Update Radarr/
+                   Podnapisi,      progress)        Sonarr paths,
+                   Addic7ed)                        refresh Jellyfin,
+                        │                           cleanup source)
+                        ▼
+                   Sync Subs
+                   (ffsubsync)
+```
+
+1. **Watchdog** monitors your download folder for new/moved files
+2. **Subtitle pipeline** fetches, extracts, and syncs subtitles automatically
+3. **FFmpeg** transcodes to your target format with real-time progress
+4. **Post-processing** updates Radarr/Sonarr, refreshes Jellyfin, cleans up source files
+
+## Features
+
+**Transcoding**
+- Configurable video codec (H.264, H.265, VP9, AV1), audio codec, container, resolution, preset, CRF
+- Compression tiers — automatically use slower presets for large files, faster for small ones
+- Dual worker pool: separate auto (watchdog) and manual (UI-triggered) workers, both resizable live
+- Batch transcode mode for re-encoding existing libraries
+- Real-time progress tracking with percentage and file size
+- Output verification (duration, streams, file size sanity checks)
+
+**Subtitles**
+- Multi-provider fetching: OpenSubtitles.com, Podnapisi, Addic7ed
+- Multi-account rotation for rate-limited providers
+- Audio-based subtitle synchronization via ffsubsync
+- Embedded subtitle extraction and format conversion
+- Per-provider enable/disable toggles and timed cooldowns
+
+**Integrations**
+- **Radarr** — auto-updates movie paths after transcode, optional source cleanup
+- **Sonarr** — auto-updates episode paths, handles series path updates for ended series
+- **Jellyfin** — automatic library refresh after transcode
+- **TMDB/OMDB** — metadata enrichment, poster fetching
+- Path remapping support for Docker/VM environments
+
+**UI & Monitoring**
+- Single-page web interface with dark theme
+- Media browser with movie/TV tabs, filtering, sorting, batch actions
+- Settings management — all encoding, integration, and provider settings configurable in-browser
+- Real-time CPU, RAM, and disk usage charts (24h history)
+- Storage trending over time (90-day retention)
+- Live log viewer
+- Connection testing for Radarr/Sonarr
+
+![Media TV Table](screenshots/screenshot-2.png)
+
+![Media Enlarged](screenshots/screenshot-3.png)
+
+## Quick Start
+
+### Option A: Bundled Postgres (recommended)
+
+```bash
+cp .env.example .env
+# Edit .env — set PROCESSING_PATH, OUTPUT_PATH, POSTGRES_PASSWORD, FLASK_SECRET, ADMIN_API_KEY
+docker compose up -d --build
+```
+
+### Option B: External Postgres
+
+```bash
+cp .env.example .env
+# Edit .env — set POSTGRES_HOST to your DB server, plus all other required vars
+docker compose -f docker-compose.external-db.yml up -d --build
+```
+
+### Configure
+
+Open `http://localhost:5025` and configure through the Settings page:
+
+1. **Encoding** — Set your target codec, resolution, preset, CRF
+2. **Radarr/Sonarr** — Add URLs and API keys for path management
+3. **Jellyfin** — Add URL and API key for library refresh
+4. **Subtitles** — Enable providers and add accounts (OpenSubtitles.com requires login)
+5. **Advanced** — Set worker counts (auto workers for watchdog, manual workers for UI-triggered jobs)
+
+Click **Start** in the header to begin watching for files.
+
+![Encoding Settings](screenshots/screenshot-4.png)
+
+![Connections Settings](screenshots/screenshot-5.png)
+
+## Configuration
+
+All runtime settings are stored in PostgreSQL and configurable through the UI. The app reads settings with this priority:
+
+```
+Database (UI settings) > Environment Variables > .env file > Defaults
+```
+
+### Encoding Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `TARGET_VIDEO_CODEC` | `h264` | h264, h265, vp9, av1 |
+| `TARGET_AUDIO_CODEC` | `aac` | aac, ac3, eac3, flac, opus |
+| `TARGET_CONTAINER` | `.mp4` | .mp4, .mkv, .webm |
+| `TARGET_RESOLUTION` | `1920x1080` | source, 720p, 1080p, 1440p, 4K |
+| `TARGET_PRESET` | `fast` | ultrafast through veryslow |
+| `TARGET_CRF` | *(codec default)* | 18-30 (lower = better quality, larger files) |
+| `TARGET_AUDIO_BITRATE` | `448k` | 128k-448k |
+| `TARGET_AUDIO_CHANNELS` | `6` | 2 (stereo), 6 (5.1), 8 (7.1) |
+| `TARGET_AUDIO_NORMALIZE` | `true` | Loudness normalization (loudnorm) |
+| `FFMPEG_THREADS` | `1` | FFmpeg thread count (0 = auto) |
+| `X264_THREADS` | `4` | x264 encoder thread count (0 = auto) |
+
+### Compression Tiers
+
+Override preset and CRF based on source file size. Configure in Settings > Encoding when the toggle is enabled.
+
+| Min GB | Max GB | Preset | CRF | Use Case |
+|--------|--------|--------|-----|----------|
+| 0 | 5 | fast | 23 | Web-DLs, already compressed |
+| 5 | 15 | medium | 21 | Standard Blu-ray rips |
+| 15 | *(unlimited)* | slow | 19 | Large remuxes, 4K content |
+
+### Worker Pool
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `AUTO_WORKERS` | `2` | Workers for watchdog auto-transcodes (0 = disabled) |
+| `MANUAL_WORKERS` | `0` | Workers for UI-triggered transcodes (0 = disabled) |
+
+Both pools can be resized live from the UI without restarting.
+
+![Systems Usage Logging](screenshots/screenshot-6.png)
+
+### Integration Settings
+
+| Integration | Settings |
+|-------------|----------|
+| **Radarr** | `RADARR_URL`, `RADARR_API_KEY`, `RADARR_PATH_FROM`, `RADARR_PATH_TO` |
+| **Sonarr** | `SONARR_URL`, `SONARR_API_KEY`, `SONARR_PATH_FROM`, `SONARR_PATH_TO` |
+| **Jellyfin** | `JELLYFIN_URL`, `JELLYFIN_API_KEY` |
+
+Path remapping (`PATH_FROM`/`PATH_TO`) translates container paths to Radarr/Sonarr's view of the filesystem.
+
+### Subtitle Providers
+
+| Provider | Auth Required | Cooldown | Notes |
+|----------|--------------|----------|-------|
+| OpenSubtitles.com | Yes (multi-account supported) | 1 hour | Best coverage, rate-limited |
+| Podnapisi | No | 15 min | Supplementary, Slovenian-focused |
+| Addic7ed | Yes (multi-account supported) | 30 min | Good for TV episodes |
+
+Provider order is configurable. Accounts rotate round-robin to distribute rate limits.
+
+![Subtitles Settings](screenshots/screenshot-7.png)
+
+## How It Works
+
+### Transcode Pipeline
+
+For each file detected by the watchdog:
+
+1. **Check compatibility** — skip if already in target format
+2. **Find subtitles** — check local `.srt` files, extract embedded subs, fetch from providers
+3. **Sync subtitles** — run ffsubsync against audio track, pick best-aligned candidate
+4. **Transcode** — FFmpeg encode with progress streaming to a `.tmp.mp4` in temp folder
+5. **Verify output** — check duration, streams, file size against source
+6. **Promote** — copy to staging file on output filesystem, atomic rename into place
+7. **Post-process** — update Radarr/Sonarr paths, refresh Jellyfin, generate poster/NFO, cleanup source
+
+### File Layout
+
+```
+/downloads/                    # WATCH_FOLDER (input)
+  movies/
+    Movie Name (2020)/
+      Movie Name (2020).mkv
+  tv/
+    Show Name/
+      Season 01/
+        Show Name - S01E01.mkv
+
+/output/                       # OUTPUT_FOLDER (transcoded)
+  movies/
+    Movie Name (2020)/
+      Movie Name (2020).mp4    # Transcoded with embedded subs
+      poster.jpg
+  tv/
+    Show Name/
+      tvshow.nfo
+      poster.jpg
+      Season 01/
+        Show Name - S01E01.mp4
+
+/temp/                         # Temp working files (cleaned automatically)
+  movies/
+    Movie Name (2020)/
+      Movie Name (2020).tmp.mp4
+      Movie Name (2020).progress.json
+```
+
+## API
+
+All endpoints are under `/api` and require the `X-API-Key` header set to your `ADMIN_API_KEY` value. Key routes:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/start` | POST | Start watchdog + auto workers |
+| `/api/stop` | POST | Stop watchdog + cancel queued jobs |
+| `/api/status` | GET | Running state |
+| `/api/settings` | GET/POST | Read/write all settings |
+| `/api/transcode/manual` | POST | Queue a single file for transcode |
+| `/api/transcode/batch` | POST | Queue multiple files (sequential) |
+| `/api/transcode/jobs` | GET | List all transcode jobs + progress |
+| `/api/media/movies` | GET | List movies in output folder |
+| `/api/media/tv` | GET | List TV episodes in output folder |
+| `/api/subtitles/search` | POST | Manually trigger subtitle search |
+| `/api/system/stats` | GET | CPU/RAM/disk usage + 24h history |
+| `/api/connections` | GET | Integration connection status |
+| `/api/webhook/radarr` | POST | Radarr post-import webhook |
+| `/api/webhook/sonarr` | POST | Sonarr post-import webhook |
+| `/api/workers/status` | GET | Worker pool state |
+| `/api/logs/tail` | GET | Live log tail (rotation-aware) |
+
+## Webhooks (optional)
+
+Webhooks let Radarr/Sonarr notify Transcodarr the moment a file is imported, so it can start transcoding immediately instead of waiting for the watchdog to pick it up.
+
+In Radarr/Sonarr, go to **Settings → Connect → Add Webhook**:
+- **Trigger**: "On Import" / "On Upgrade"
+- **URL**: `http://transcodarr:5025/api/webhook/radarr` (or `.../sonarr`)
+
+> **Note:** The `transcodarr` hostname works when both containers share a Docker network. If running on a separate host, use that host's IP/hostname instead.
+
+## Requirements
+
+- Docker
+- PostgreSQL database (external or containerized)
+- FFmpeg (included in Docker image)
+
+### Hardware
+
+Transcoding is CPU and memory intensive. Each worker runs a full FFmpeg process, so resource needs scale with your worker count.
+
+| Workers | RAM | CPU Cores | Notes |
+|---------|-----|-----------|-------|
+| 1–2 | 4 GB | 4 | Comfortable for background transcoding |
+| 3 | 8 GB | 6 | Usable but system will be near full load |
+| 4+ | 16 GB+ | 8+ | Recommended for parallel batch jobs |
+
+These are rough guidelines — actual usage depends on codec, resolution, and source file size. H.265 and AV1 encoding are significantly more demanding than H.264. Monitor your system with the built-in CPU/RAM charts and adjust worker counts live from the UI.
+
+## Tech Stack
+
+- **Backend**: Python 3.11, Flask, Gunicorn
+- **Frontend**: Vanilla JavaScript (single-page app, no build step)
+- **Database**: PostgreSQL (runtime settings, transcode history, media metadata)
+- **Transcoding**: FFmpeg with progress streaming
+- **Subtitles**: Subliminal + ffsubsync
+- **File Monitoring**: Python watchdog
+
+## License
+
+MIT

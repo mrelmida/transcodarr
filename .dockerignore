@@ -1,0 +1,15 @@
+.env
+.env.*
+*.pyc
+__pycache__
+.git
+.gitignore
+.venv
+*.log
+logs/
+data/
+screenshots/
+tests/
+*.md
+!README.md
+LICENSE

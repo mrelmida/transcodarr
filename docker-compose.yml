@@ -1,0 +1,28 @@
+services:
+  transcodarr:
+    build: .
+    container_name: transcodarr
+    ports:
+      - "5025:5025"
+    env_file: .env
+    volumes:
+      - ${PROCESSING_PATH:?Set PROCESSING_PATH}:/downloads
+      - ${OUTPUT_PATH:?Set OUTPUT_PATH}:/output
+      - ${TEMP_PATH:-/tmp/transcodarr}:/temp
+      - ${LOG_PATH:-./logs}:/app/logs
+      - ${DATA_PATH:-./data}:/app/data
+      - ${CONFIG_PATH:-./config}:/app/config
+    environment:
+      - FLASK_ENV=production
+      - ENV_FILE_PATH=./config/.env
+      - WATCH_FOLDER=/downloads
+      - OUTPUT_FOLDER=/output
+      - MEDIA_TEMP_FOLDER=/temp
+      - FLASK_SECRET=${FLASK_SECRET:?Set FLASK_SECRET in .env}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?Set ADMIN_API_KEY in .env}
+      - POSTGRES_HOST=${POSTGRES_HOST:?Set POSTGRES_HOST in .env}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-transcodarr}
+      - POSTGRES_USER=${POSTGRES_USER:-transcodarr}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    restart: unless-stopped

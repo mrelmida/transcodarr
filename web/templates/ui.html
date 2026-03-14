@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Transcodarr</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="/static/style.css?v=26" />
+</head>
+<body class="theme-dark">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo">🎬</span>
+      <span>Transcodarr</span>
+    </div>
+    <div class="header-actions">
+      <div class="header-group" id="auto-group">
+        <span class="header-group-label">AUTO</span>
+        <span class="worker-pill" id="auto-workers" title="Auto workers">
+          <span class="worker-icon">&#9881;</span>
+          <span id="auto-worker-count">0/0</span>
+        </span>
+        <span id="status-badge" class="badge badge-stopped">Stopped</span>
+        <button id="start-btn" class="btn btn-primary btn-sm-header">Start</button>
+        <button id="stop-btn" class="btn btn-sm-header">Stop</button>
+      </div>
+      <div class="header-group" id="manual-group">
+        <span class="header-group-label">MANUAL</span>
+        <span class="worker-pill" id="manual-workers" title="Manual workers">
+          <span class="worker-icon">&#9881;</span>
+          <span id="manual-worker-count">0/0</span>
+        </span>
+        <span id="manual-badge" class="badge badge-off">Off</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Shell -->
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <nav class="nav">
+        <button class="nav-item active" data-view="media">
+          <span class="nav-ic">🎞️</span> Media
+        </button>
+        <button class="nav-item" data-view="logs">
+          <span class="nav-ic">📜</span> Logs
+        </button>
+        <button class="nav-item" data-view="stats">
+          <span class="nav-ic">📊</span> System
+        </button>
+        <button class="nav-item nav-item-parent" data-view="settings">
+          <span class="nav-ic">⚙️</span> Settings
+          <span class="nav-arrow">▾</span>
+        </button>
+        <div id="settings-subnav" class="nav-subnav">
+          <!-- Populated by JavaScript -->
+        </div>
+      </nav>
+
+      <div class="sidebar-info">
+        <div><strong>Watch:</strong> <span id="watch-folder">—</span></div>
+        <div><strong>Output:</strong> <span id="output-folder">—</span></div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="content">
+      <!-- MEDIA -->
+      <section id="view-media" class="view visible">
+        <div class="tabs-row">
+          <div class="tabs">
+            <button class="tab active" data-tab="movies">Movies</button>
+            <button class="tab" data-tab="tv">TV Shows</button>
+          </div>
+          <div class="media-stats">
+            <span id="stats-total"></span>
+          </div>
+        </div>
+
+        <div class="tabpanes">
+          <div id="tab-movies" class="tabpane visible">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Movies</h3>
+                <div class="table-filters" id="movie-filters">
+                  <input type="text" class="filter-search" id="movie-search"
+                         placeholder="Search titles..." autocomplete="off">
+                  <select class="filter-status" id="movie-status-filter">
+                    <option value="all">All</option>
+                    <option value="ready">Ready</option>
+                    <option value="pending">Pending</option>
+                    <option value="processing">Processing</option>
+                    <option value="ignored">Ignored</option>
+                  </select>
+                </div>
+                <div class="panel-actions">
+                  <div class="bulk-actions hidden" id="movie-bulk-actions">
+                    <span class="bulk-count" id="movie-bulk-count">0 selected</span>
+                    <button class="btn btn-sm btn-transcode bulk-transcode" data-type="movie">Transcode</button>
+                    <button class="btn btn-sm btn-ignore bulk-ignore" data-type="movie">Ignore</button>
+                    <button class="btn btn-sm btn-stop bulk-delete" data-type="movie">Delete</button>
+                  </div>
+                  <button id="refresh-movies" class="btn btn-ghost">Refresh</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="tbl">
+                  <thead id="movies-thead">
+                    <tr></tr>
+                  </thead>
+                  <tbody id="movies-body">
+                    <!-- filled by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div id="tab-tv" class="tabpane">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>TV Shows</h3>
+                <div class="table-filters" id="tv-filters">
+                  <input type="text" class="filter-search" id="tv-search"
+                         placeholder="Search titles..." autocomplete="off">
+                  <select class="filter-status" id="tv-status-filter">
+                    <option value="all">All</option>
+                    <option value="ready">Ready</option>
+                    <option value="pending">Pending</option>
+                    <option value="processing">Processing</option>
+                    <option value="ignored">Ignored</option>
+                  </select>
+                </div>
+                <div class="panel-actions">
+                  <div class="bulk-actions hidden" id="tv-bulk-actions">
+                    <span class="bulk-count" id="tv-bulk-count">0 selected</span>
+                    <button class="btn btn-sm btn-transcode bulk-transcode" data-type="tv">Transcode</button>
+                    <button class="btn btn-sm btn-ignore bulk-ignore" data-type="tv">Ignore</button>
+                    <button class="btn btn-sm btn-stop bulk-delete" data-type="tv">Delete</button>
+                  </div>
+                  <button id="refresh-tv" class="btn btn-ghost">Refresh</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="tbl">
+                  <thead id="tv-thead">
+                    <tr></tr>
+                  </thead>
+                  <tbody id="tv-body">
+                    <!-- filled by JS -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOGS -->
+      <section id="view-logs" class="view">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Recent Logs</h3>
+            <div class="panel-actions">
+              <button id="clear-log" class="btn btn-ghost">Clear View</button>
+            </div>
+          </div>
+          <div class="log-container">
+            <pre id="log-output"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- SYSTEM STATS -->
+      <section id="view-stats" class="view">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-card-header"><h4>CPU</h4><span class="stat-live" id="cpu-live">--%</span></div>
+            <div class="stat-chart" id="cpu-chart"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-header"><h4>Memory</h4><span class="stat-live" id="ram-live">--%</span></div>
+            <div class="stat-chart" id="ram-chart"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-header"><h4>Output Storage</h4><span class="stat-live" id="disk-live">--</span></div>
+            <div class="stat-chart" id="disk-chart"></div>
+          </div>
+        </div>
+        <div class="panel" id="storage-panel">
+          <div class="panel-head">
+            <h3>Storage Over Time</h3>
+            <div class="panel-actions">
+              <select class="filter-status" id="storage-range">
+                <option value="7d">Last 7 days</option>
+                <option value="30d" selected>Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
+          </div>
+          <div class="storage-chart-wrap" id="storage-chart"></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="view-settings" class="view">
+        <div class="settings-panel">
+          <div class="settings-main">
+            <div class="settings-header">
+              <h2 id="settings-section-title">Settings</h2>
+              <div class="settings-actions">
+                <span id="settings-status" class="settings-status"></span>
+                <button id="save-settings" type="button" class="btn btn-primary">Save</button>
+              </div>
+            </div>
+            <div id="settings-container" class="settings-content">
+              <!-- Populated by JavaScript -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Media Detail Modal -->
+  <div id="media-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <button class="modal-close">&times;</button>
+      <div class="modal-body">
+        <div class="modal-poster">
+          <img id="modal-poster-img" src="" alt="Poster">
+        </div>
+        <div class="modal-info">
+          <h2 id="modal-title"></h2>
+          <p id="modal-subtitle" class="modal-subtitle"></p>
+          <div id="modal-description-group" class="modal-description" style="display:none;">
+            <p id="modal-description"></p>
+            <div id="modal-meta-row" class="modal-meta-row">
+              <span id="modal-genres"></span>
+              <span id="modal-rating"></span>
+            </div>
+          </div>
+          <div class="modal-details">
+            <div class="detail-group">
+              <h4>File Info</h4>
+              <div class="detail-row"><span>Path:</span><span id="modal-path" class="detail-path"></span></div>
+              <div class="detail-row"><span>Size:</span><span id="modal-size"></span></div>
+              <div class="detail-row"><span>Container:</span><span id="modal-container"></span></div>
+              <div class="detail-row"><span>Modified:</span><span id="modal-mtime"></span></div>
+            </div>
+            <div class="detail-group">
+              <h4>Video</h4>
+              <div class="detail-row"><span>Codec:</span><span id="modal-vcodec"></span></div>
+              <div class="detail-row"><span>Resolution:</span><span id="modal-resolution"></span></div>
+              <div class="detail-row"><span>Frame Rate:</span><span id="modal-fps"></span></div>
+              <div class="detail-row"><span>Bitrate:</span><span id="modal-vbitrate"></span></div>
+            </div>
+            <div class="detail-group">
+              <h4>Audio</h4>
+              <div class="detail-row"><span>Codec:</span><span id="modal-acodec"></span></div>
+              <div class="detail-row"><span>Channels:</span><span id="modal-channels"></span></div>
+              <div class="detail-row"><span>Bitrate:</span><span id="modal-abitrate"></span></div>
+            </div>
+            <div class="detail-group" id="modal-transcode-group">
+              <h4>Transcode</h4>
+              <div class="detail-row"><span>Processed:</span><span id="modal-processed"></span></div>
+              <div class="detail-row"><span>Duration:</span><span id="modal-duration"></span></div>
+              <div class="detail-row"><span>Source Size:</span><span id="modal-source-size"></span></div>
+              <div class="detail-row"><span>Compression:</span><span id="modal-compression"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.API_BASE = "{{ api_base | default('/api') }}";
+    window.UI_BOOT  = {{ (ui_boot or {}) | tojson }};
+  </script>
+  <script src="/static/ui.js?v=40"></script>
+</body>
+</html>
