@@ -25,4 +25,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-transcodarr}
       - POSTGRES_USER=${POSTGRES_USER:-transcodarr}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "${SYSLOG_ADDRESS:-tcp://localhost:1514}"
+        tag: "transcodarr"
     restart: unless-stopped

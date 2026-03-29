@@ -81,17 +81,23 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     if tier_crf is not None and tier_crf != "":
         crf = tier_crf
 
-    # Always sanitize the SRT for mov_text robustness
-    srt_safe = sanitize_for_movtext(srt_path)
+    # Sanitize the SRT for mov_text robustness (if provided)
+    srt_safe = sanitize_for_movtext(srt_path) if srt_path else None
 
     cmd = [
         "ffmpeg", "-y", "-y", "-threads", ffmpeg_threads,
         "-progress", "pipe:1", "-nostats",
         "-i", file_path,
-        "-sub_charenc", "UTF-8", "-i", srt_safe,
+    ]
+    if srt_safe:
+        cmd += ["-sub_charenc", "UTF-8", "-i", srt_safe]
+    cmd += [
         "-map", "0:v:0",
         "-map", "0:a:0?",
-        "-map", "1:0",
+    ]
+    if srt_safe:
+        cmd += ["-map", "1:0"]
+    cmd += [
         "-c:v", "libx264",
         "-x264-params", f"threads={x264_threads}",
     ]
@@ -146,8 +152,10 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
 
     cmd += [
         "-c:a", "aac", "-b:a", audio_bitrate, "-ac", audio_channels,
-        "-c:s", "mov_text",
-        "-metadata:s:s:0", "language=eng",
+    ]
+    if srt_safe:
+        cmd += ["-c:s", "mov_text", "-metadata:s:s:0", "language=eng"]
+    cmd += [
         "-map_metadata", "-1",
         "-map_chapters", "-1",
         "-movflags", "+faststart",
@@ -283,9 +291,23 @@ def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: 
     except Exception as e:
         logging.error(f"[FFMPEG] Combined encode failed: {e}")
 
+    # 2) Fallback: transcode video+audio without subs, then mux subs separately
+    tmp_no_subs = out_path + ".nosubs.mp4"
+    tmp_with_subs = out_path + ".withsubs.mp4"
+
+    try:
+        logging.info("[SUBS] Trying fallback: transcode without subs, then mux subs.")
+        cmd_no_subs = build_ffmpeg_cmd(file_path, None, tmp_no_subs, s)
+        _log_progress(cmd_no_subs)
+        if not os.path.exists(tmp_no_subs):
+            raise RuntimeError(f"Fallback transcode produced no output: {tmp_no_subs}")
+    except Exception as e:
+        logging.error(f"[FFMPEG] Fallback transcode (no subs) also failed: {e}")
+        raise
+
     # 3) Mux sanitized subs into that video
     try:
-        logging.info(f"[SUBS] Trying fallback transcode then copy and post transcode mux of subs.")
+        logging.info("[SUBS] Muxing subs into fallback transcode output.")
         cmd = build_sub_copy_mux_cmd(tmp_no_subs, srt_path, tmp_with_subs)
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:

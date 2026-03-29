@@ -58,11 +58,12 @@ def detect_hdr(path: str) -> dict:
             color_primaries = st.get("color_primaries", "")
             pix_fmt = st.get("pix_fmt", "")
 
+            # 10-bit pixel formats alone don't mean HDR — anime and some Blu-ray
+            # rips use 10-bit SDR.  Require actual HDR transfer characteristics
+            # or BT.2020 primaries before applying tone mapping.
             is_hdr = (
                 color_transfer in ("smpte2084", "arib-std-b67")
                 or color_primaries == "bt2020"
-                or "p10" in pix_fmt
-                or "p12" in pix_fmt
             )
 
             if is_hdr:
