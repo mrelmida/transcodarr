@@ -227,9 +227,10 @@ def read_nfo_as_meta(nfo_path: str) -> dict:
     return {}
 
 
-def write_nfo_from_meta(meta_path: str, out_video_path: str) -> Optional[str]:
+def write_nfo_from_meta(meta_path: str, out_video_path: str, *, episode_plot: str = None, movie_plot: str = None) -> Optional[str]:
     """
     Read sidecar meta from *processing* tree and write an .nfo next to *out_video_path*.
+    Optionally accepts episode_plot or movie_plot to embed a <plot> element.
     Returns the NFO path, or None if skipped.
     """
     try:
@@ -277,6 +278,9 @@ def write_nfo_from_meta(meta_path: str, out_video_path: str) -> Optional[str]:
                 _text(root, "episode", _get_first(ep_numbers))
                 _text(root, "title", _get_first(ep_titles))
 
+            if episode_plot:
+                _text(root, "plot", episode_plot)
+
             ids = ep.get("ids") or {}
             ep_imdb = _get_first(ids.get("imdb"))
             ep_tvdb = _get_first(ids.get("tvdb"))
@@ -304,6 +308,8 @@ def write_nfo_from_meta(meta_path: str, out_video_path: str) -> Optional[str]:
 
             _text(root, "title", title)
             if year: _text(root, "year", year)
+            if movie_plot:
+                _text(root, "plot", movie_plot)
             if imdb: _uniq(root, "imdb", imdb, default=True)
             if tmdb: _uniq(root, "tmdb", str(tmdb))
             if tvdb: _uniq(root, "tvdb", str(tvdb))

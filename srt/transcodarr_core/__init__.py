@@ -35,6 +35,7 @@ from .database import (
 )
 from .worker_pool import WorkerPoolManager, get_worker_pool, set_worker_pool, cleanup_stale_temp_files, JobStatus
 from .metadata import (
-    fetch_movie_metadata, fetch_series_metadata,
+    fetch_movie_metadata, fetch_series_metadata, fetch_episode_metadata,
     get_movie_description, get_series_description
 )
+from .enrich import enrich_media

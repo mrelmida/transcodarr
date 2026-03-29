@@ -170,6 +170,57 @@ def get_movie_description(imdb_id: str = None, tmdb_id: str = None,
     return metadata.get("description") if metadata else None
 
 
+def fetch_episode_metadata(sonarr_series_id: int, season: int, episode: int) -> Optional[Dict]:
+    """
+    Fetch a single episode's metadata (plot, title, airdate, etc.) from Sonarr.
+    Uses /api/v3/episode?seriesId=X to get all episodes for the series,
+    then matches by season/episode number.
+    """
+    if not settings.SONARR_URL or not settings.SONARR_API_KEY:
+        logging.debug("[METADATA] Sonarr not configured, skipping episode metadata fetch")
+        return None
+
+    try:
+        with _sonarr_session() as session:
+            r = session.get(
+                f"{settings.SONARR_URL}/api/v3/episode",
+                params={"seriesId": sonarr_series_id},
+                timeout=settings.SONARR_TIMEOUT_S,
+            )
+            r.raise_for_status()
+            episodes = r.json()
+
+            for ep in episodes:
+                if ep.get("seasonNumber") == season and ep.get("episodeNumber") == episode:
+                    metadata = {
+                        "title": ep.get("title"),
+                        "overview": ep.get("overview"),
+                        "air_date": ep.get("airDate"),
+                        "season": ep.get("seasonNumber"),
+                        "episode": ep.get("episodeNumber"),
+                        "tvdb_id": ep.get("tvdbId"),
+                        "source": "sonarr",
+                    }
+                    logging.info("[METADATA] Fetched episode metadata: S%02dE%02d %s",
+                                 season, episode, metadata.get("title"))
+                    return metadata
+
+            logging.debug("[METADATA] Episode S%02dE%02d not found for series %s",
+                          season, episode, sonarr_series_id)
+            return None
+
+    except Exception as e:
+        logging.warning("[METADATA] Failed to fetch episode metadata: %s", e)
+        return None
+
+
+def get_movie_description(imdb_id: str = None, tmdb_id: str = None,
+                          title: str = None, year: int = None) -> Optional[str]:
+    """Convenience function to get just the movie description."""
+    metadata = fetch_movie_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id, title=title, year=year)
+    return metadata.get("description") if metadata else None
+
+
 def get_series_description(imdb_id: str = None, tvdb_id: int = None, tmdb_id: int = None,
                            title: str = None) -> Optional[str]:
     """Convenience function to get just the series description."""

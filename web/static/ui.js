@@ -230,10 +230,11 @@ function actionHtml(item, type, idx) {
     return `<div class="action-btns"><button class="btn btn-sm btn-stop" data-type="${type}" data-idx="${idx}" title="Stop re-encode">Stop</button></div>`;
   }
 
-  // Ready items get a transcode button
+  // Ready items get a transcode button + get meta
   if (item.status === "ready") {
     const transcodeBtn = `<button class="btn btn-sm btn-transcode" data-type="${type}" data-idx="${idx}" title="Transcode with current settings">Transcode</button>`;
-    return `<div class="action-btns">${transcodeBtn}</div>`;
+    const enrichBtn = `<button class="btn btn-sm btn-enrich" data-type="${type}" data-idx="${idx}" title="Fetch metadata, NFO, poster">Meta</button>`;
+    return `<div class="action-btns">${enrichBtn}${transcodeBtn}</div>`;
   }
 
   // Only show transcode/ignore for pending items
@@ -254,16 +255,50 @@ function actionHtml(item, type, idx) {
     ? ""
     : `<button class="btn btn-sm btn-delete-subs" data-type="${type}" data-idx="${idx}" title="Delete existing subtitles">&#128465;</button>`;
 
+  // Get metadata button
+  const enrichBtn = isIgnored
+    ? ""
+    : `<button class="btn btn-sm btn-enrich" data-type="${type}" data-idx="${idx}" title="Fetch metadata, NFO, poster">Meta</button>`;
+
   return `
     <div class="action-btns">
       ${subsBtn}
       ${deleteSubsBtn}
+      ${enrichBtn}
       ${transcodeBtn}
       <button class="${ignoreClass}" data-type="${type}" data-idx="${idx}" title="${ignoreTitle}">
         ${isIgnored ? "&#10003;" : "&#8709;"}
       </button>
     </div>
   `;
+}
+
+async function handleEnrichClick(item, type) {
+  const btn = event ? event.target : null;
+  const origText = btn ? btn.textContent : "";
+  if (btn) { btn.textContent = "..."; btn.disabled = true; }
+
+  try {
+    const r = await fetch(`${API}/media/enrich`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ path: item.path })
+    });
+    const result = await r.json();
+    if (r.ok) {
+      const parts = [];
+      if (result.nfo_written) parts.push("NFO");
+      if (result.poster_downloaded) parts.push("Poster");
+      const msg = parts.length > 0 ? parts.join(" + ") + " saved" : "No new metadata found";
+      showSubsToast({ _custom: msg });
+    } else {
+      showSubsToast({ error: result.error || "Enrichment failed" });
+    }
+  } catch (e) {
+    showSubsToast({ error: e.message });
+  } finally {
+    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  }
 }
 
 async function handleTranscodeClick(item, type) {
@@ -548,6 +583,20 @@ function showSubsToast(result) {
   } else {
     toast.className = "subs-toast warning";
     toast.innerHTML = `<span class="toast-icon">&#10007;</span> No subtitles found`;
+  }
+
+  // Override with custom message if provided
+  if (result._custom) {
+    toast.className = "subs-toast success";
+    toast.innerHTML = `<span class="toast-icon">&#10003;</span> ${result._custom}`;
+  }
+
+  // Custom searching message
+  if (result._searching && result._custom_searching) {
+    toast.className = "subs-toast searching";
+    toast.innerHTML = `<span class="toast-icon spin">&#9881;</span> ${result._custom_searching}`;
+    document.body.appendChild(toast);
+    return;
   }
 
   document.body.appendChild(toast);
@@ -1052,6 +1101,14 @@ function renderMoviesTable(items) {
     });
   });
 
+  body.querySelectorAll(".btn-enrich").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
+      if (item) handleEnrichClick(item, "movie");
+    });
+  });
+
   updateBulkActionBar("movie");
   updateSelectAllState("movie");
 }
@@ -1225,6 +1282,81 @@ function showDeleteConfirmModal(items, type) {
     if (e.key === "Escape") { modal.remove(); document.removeEventListener("keydown", handleEscape); }
   };
   document.addEventListener("keydown", handleEscape);
+}
+
+async function handleBulkEnrich(type) {
+  const sel = type === "movie" ? movieSelection : tvSelection;
+  const displayed = type === "movie" ? displayedMovies : displayedTV;
+  const eligible = displayed.filter(d => sel.has(d.path) && !d.ignored);
+
+  if (eligible.length === 0) { alert("No eligible items selected."); return; }
+  if (!confirm(`Fetch metadata for ${eligible.length} item(s)?`)) return;
+
+  let done = 0, nfos = 0, posters = 0;
+  showSubsToast({ _searching: true, _custom_searching: `Enriching 0/${eligible.length}...` });
+
+  for (const item of eligible) {
+    try {
+      const r = await fetch(`${API}/media/enrich`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ path: item.path })
+      });
+      const result = await r.json();
+      if (result.nfo_written) nfos++;
+      if (result.poster_downloaded) posters++;
+    } catch (e) { /* continue */ }
+    done++;
+    const existing = document.querySelector(".subs-toast");
+    if (existing) existing.innerHTML = `<span class="toast-icon spin">&#9881;</span> Enriching ${done}/${eligible.length}...`;
+  }
+
+  showSubsToast({ _custom: `Done: ${nfos} NFOs, ${posters} posters` });
+  if (type === "movie") loadMovies(false); else loadTV(false);
+}
+
+async function handleEnrichAll() {
+  const enrichBtn = event ? event.target : null;
+  if (enrichBtn) { enrichBtn.disabled = true; enrichBtn.textContent = "Starting..."; }
+
+  try {
+    const r = await fetch(`${API}/media/enrich-all`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+    });
+    const result = await r.json();
+    if (!r.ok) {
+      alert(result.error || "Failed to start enrichment");
+      if (enrichBtn) { enrichBtn.disabled = false; enrichBtn.textContent = "Enrich All"; }
+      return;
+    }
+
+    // Poll progress
+    const pollInterval = setInterval(async () => {
+      try {
+        const sr = await fetch(`${API}/media/enrich-status`);
+        const status = await sr.json();
+
+        if (enrichBtn) {
+          enrichBtn.textContent = `${status.processed}/${status.total} (${status.nfo_written} NFOs)`;
+        }
+
+        if (!status.running) {
+          clearInterval(pollInterval);
+          if (enrichBtn) { enrichBtn.disabled = false; enrichBtn.textContent = "Enrich All"; }
+          showSubsToast({ _custom: `Enrichment complete: ${status.nfo_written} NFOs, ${status.posters_downloaded} posters` });
+          loadMovies(false);
+          loadTV(false);
+        }
+      } catch (e) {
+        clearInterval(pollInterval);
+        if (enrichBtn) { enrichBtn.disabled = false; enrichBtn.textContent = "Enrich All"; }
+      }
+    }, 2000);
+  } catch (e) {
+    alert("Error: " + e.message);
+    if (enrichBtn) { enrichBtn.disabled = false; enrichBtn.textContent = "Enrich All"; }
+  }
 }
 
 async function loadMovies(forceRefresh = false){
@@ -1415,6 +1547,14 @@ function renderTVTable(items) {
     });
   });
 
+  body.querySelectorAll(".btn-enrich").forEach(el => {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const item = displayedTV[parseInt(el.dataset.idx, 10)];
+      if (item) handleEnrichClick(item, "tv");
+    });
+  });
+
   updateBulkActionBar("tv");
   updateSelectAllState("tv");
 }
@@ -1453,6 +1593,10 @@ async function loadTV(forceRefresh = false){
 }
   $("#refresh-movies").addEventListener("click", () => loadMovies(true));
   $("#refresh-tv").addEventListener("click", () => loadTV(true));
+  const _enrichAllMovies = $("#enrich-all-movies");
+  if (_enrichAllMovies) _enrichAllMovies.addEventListener("click", () => handleEnrichAll());
+  const _enrichAllTV = $("#enrich-all-tv");
+  if (_enrichAllTV) _enrichAllTV.addEventListener("click", () => handleEnrichAll());
 
   // ----- Filter event listeners -----
   let _movieSearchTimer = null;
@@ -1490,6 +1634,9 @@ async function loadTV(forceRefresh = false){
   });
   $$(".bulk-delete").forEach(btn => {
     btn.addEventListener("click", () => handleBulkDelete(btn.dataset.type));
+  });
+  $$(".bulk-enrich").forEach(btn => {
+    btn.addEventListener("click", () => handleBulkEnrich(btn.dataset.type));
   });
 
   // ----- Settings -----

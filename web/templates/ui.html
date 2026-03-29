@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Transcodarr</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="/static/style.css?v=26" />
+  <link rel="stylesheet" href="/static/style.css?v=27" />
 </head>
 <body class="theme-dark">
   <!-- Header -->
@@ -97,10 +97,12 @@
                 <div class="panel-actions">
                   <div class="bulk-actions hidden" id="movie-bulk-actions">
                     <span class="bulk-count" id="movie-bulk-count">0 selected</span>
+                    <button class="btn btn-sm btn-enrich bulk-enrich" data-type="movie">Get Metadata</button>
                     <button class="btn btn-sm btn-transcode bulk-transcode" data-type="movie">Transcode</button>
                     <button class="btn btn-sm btn-ignore bulk-ignore" data-type="movie">Ignore</button>
                     <button class="btn btn-sm btn-stop bulk-delete" data-type="movie">Delete</button>
                   </div>
+                  <button id="enrich-all-movies" class="btn btn-ghost">Enrich All</button>
                   <button id="refresh-movies" class="btn btn-ghost">Refresh</button>
                 </div>
               </div>
@@ -135,10 +137,12 @@
                 <div class="panel-actions">
                   <div class="bulk-actions hidden" id="tv-bulk-actions">
                     <span class="bulk-count" id="tv-bulk-count">0 selected</span>
+                    <button class="btn btn-sm btn-enrich bulk-enrich" data-type="tv">Get Metadata</button>
                     <button class="btn btn-sm btn-transcode bulk-transcode" data-type="tv">Transcode</button>
                     <button class="btn btn-sm btn-ignore bulk-ignore" data-type="tv">Ignore</button>
                     <button class="btn btn-sm btn-stop bulk-delete" data-type="tv">Delete</button>
                   </div>
+                  <button id="enrich-all-tv" class="btn btn-ghost">Enrich All</button>
                   <button id="refresh-tv" class="btn btn-ghost">Refresh</button>
                 </div>
               </div>
@@ -281,6 +285,6 @@
     window.API_BASE = "{{ api_base | default('/api') }}";
     window.UI_BOOT  = {{ (ui_boot or {}) | tojson }};
   </script>
-  <script src="/static/ui.js?v=40"></script>
+  <script src="/static/ui.js?v=41"></script>
 </body>
 </html>

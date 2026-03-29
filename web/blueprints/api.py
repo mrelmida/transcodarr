@@ -21,6 +21,7 @@ from transcodarr_core.database import (
     insert_storage_snapshot, get_storage_history, prune_storage_history,
 )
 from transcodarr_core.metadata import fetch_movie_metadata, fetch_series_metadata
+from transcodarr_core.enrich import enrich_media
 
 api_bp = Blueprint("api", __name__)  # <-- name it api_bp to avoid confusion
 
@@ -3390,6 +3391,111 @@ def api_check_ignored():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+
+# ===================================================================
+#                    METADATA ENRICHMENT ENDPOINTS
+# ===================================================================
+
+# Enrichment progress tracking
+_enrich_state = {"running": False, "total": 0, "processed": 0, "nfo_written": 0, "posters_downloaded": 0, "errors": 0}
+
+@api_bp.post("/media/enrich")
+def api_enrich_single():
+    """Enrich a single media file with metadata, NFO, and poster."""
+    data = request.get_json(silent=True) or {}
+    path = data.get("path")
+    if not path:
+        return jsonify({"error": "path is required"}), 400
+
+    try:
+        from transcodarr_core.enrich import enrich_media
+        result = enrich_media(path)
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        logging.error("[ENRICH] Failed to enrich %s: %s", path, e)
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.post("/media/enrich-all")
+def api_enrich_all():
+    """Start bulk enrichment of all movies/episodes missing NFOs."""
+    if _enrich_state["running"]:
+        return jsonify({"error": "Enrichment already running", "status": _enrich_state}), 409
+
+    def _run_enrichment():
+        from transcodarr_core.enrich import enrich_media
+        from transcodarr_core.nfo import find_nfo_for_video
+        import time as _time
+
+        _enrich_state["running"] = True
+        _enrich_state["processed"] = 0
+        _enrich_state["nfo_written"] = 0
+        _enrich_state["posters_downloaded"] = 0
+        _enrich_state["errors"] = 0
+
+        try:
+            # Gather all media files from DB
+            movies = get_all_movies()
+            episodes = get_all_tv_episodes()
+
+            # Filter to those missing NFOs
+            to_enrich = []
+            for m in movies:
+                if m.get("path") and not find_nfo_for_video(m["path"]):
+                    to_enrich.append(m["path"])
+            for e in episodes:
+                if e.get("path") and not find_nfo_for_video(e["path"]):
+                    to_enrich.append(e["path"])
+
+            _enrich_state["total"] = len(to_enrich)
+            logging.info("[ENRICH] Starting bulk enrichment: %d files", len(to_enrich))
+
+            for path in to_enrich:
+                if not _enrich_state["running"]:
+                    logging.info("[ENRICH] Bulk enrichment cancelled")
+                    break
+
+                try:
+                    result = enrich_media(path)
+                    if result.get("nfo_written"):
+                        _enrich_state["nfo_written"] += 1
+                    if result.get("poster_downloaded"):
+                        _enrich_state["posters_downloaded"] += 1
+                except Exception as e:
+                    logging.warning("[ENRICH] Failed to enrich %s: %s", path, e)
+                    _enrich_state["errors"] += 1
+
+                _enrich_state["processed"] += 1
+
+                # Rate limit: small delay between API calls
+                _time.sleep(0.5)
+
+            logging.info("[ENRICH] Bulk enrichment complete: %d/%d processed, %d NFOs, %d posters",
+                         _enrich_state["processed"], _enrich_state["total"],
+                         _enrich_state["nfo_written"], _enrich_state["posters_downloaded"])
+        finally:
+            _enrich_state["running"] = False
+
+    t = Thread(target=_run_enrichment, daemon=True)
+    t.start()
+    return jsonify({"ok": True, "status": "started"})
+
+
+@api_bp.get("/media/enrich-status")
+def api_enrich_status():
+    """Check progress of bulk enrichment."""
+    return jsonify(_enrich_state)
+
+
+@api_bp.post("/media/enrich-stop")
+def api_enrich_stop():
+    """Stop a running bulk enrichment."""
+    if _enrich_state["running"]:
+        _enrich_state["running"] = False
+        return jsonify({"ok": True, "status": "stopping"})
+    return jsonify({"ok": True, "status": "not_running"})
 
 
 # ===================================================================

@@ -212,6 +212,12 @@ body.theme-dark{
   background:rgba(239,68,68,.15);border-color:var(--danger);color:var(--danger);
 }
 
+/* Enrich/Meta button */
+.btn-enrich{
+  background:rgba(34,197,94,.1);border:1px solid var(--ok);color:var(--ok);
+}
+.btn-enrich:hover{background:var(--ok);border-color:var(--ok);color:white}
+
 /* Loading skeleton */
 .skeleton{position:relative;overflow:hidden;background:var(--bg-soft);border-radius:4px}
 .skeleton::after{
