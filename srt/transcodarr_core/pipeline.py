@@ -49,8 +49,17 @@ def verify_output(src_path: str, tmp_out: str, chosen_srt: Optional[str], requir
             return False
         out_size = os.path.getsize(tmp_out)
         src_size = os.path.getsize(src_path)
-        if src_size > 0 and out_size < src_size * 0.10:
-            logging.warning(f"[VERIFY] output too small: {out_size / 1024 / 1024:.1f} MB is <10% of source {src_size / 1024 / 1024:.1f} MB")
+        # Sliding min-size ratio: large high-bitrate sources compress much more
+        # than small ones.  10% for <2 GB, 5% for 2-10 GB, 2% for >10 GB.
+        src_gb = src_size / (1024 ** 3)
+        if src_gb > 10:
+            min_ratio = 0.02
+        elif src_gb > 2:
+            min_ratio = 0.05
+        else:
+            min_ratio = 0.10
+        if src_size > 0 and out_size < src_size * min_ratio:
+            logging.warning(f"[VERIFY] output too small: {out_size / 1024 / 1024:.1f} MB is <{min_ratio*100:.0f}% of source {src_size / 1024 / 1024:.1f} MB")
             return False
 
         src_info = ffprobe_json(src_path)
