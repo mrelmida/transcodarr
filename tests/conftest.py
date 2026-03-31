@@ -6,8 +6,6 @@ so tests run fast without Postgres, FFmpeg, or external services.
 """
 
 import os
-import types
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -43,7 +41,6 @@ def _make_mock_worker_pool():
     pool.can_accept_job.return_value = True
     pool.get_active_job_count.return_value = 0
 
-    # submit_manual_job returns a mock job object
     mock_job = MagicMock()
     mock_job.id = "test-job-001"
     mock_job.to_dict.return_value = {
@@ -58,8 +55,8 @@ def _make_mock_worker_pool():
 
 
 @pytest.fixture()
-def app(tmp_path):
-    """Create the FastAPI app with database and worker pool mocked out."""
+def client(tmp_path):
+    """Starlette test client with lifespan triggered and mocks active."""
     from starlette.testclient import TestClient
 
     log_file = str(tmp_path / "transcode.log")
@@ -82,16 +79,16 @@ def app(tmp_path):
 
         from web.app import app as application
 
-        # Override state after lifespan startup
-        application.state.log_path = log_file
-        application.state.run_lock_path = lock_file
-        application.state.worker_pool = mock_pool
-
-        yield application
+        # Enter TestClient as context manager to trigger lifespan
+        with TestClient(application) as c:
+            # Override state after lifespan has set it
+            application.state.log_path = log_file
+            application.state.run_lock_path = lock_file
+            application.state.worker_pool = mock_pool
+            yield c
 
 
 @pytest.fixture()
-def client(app):
-    """Starlette test client."""
-    from starlette.testclient import TestClient
-    return TestClient(app)
+def app(client):
+    """The FastAPI app (accessed via client fixture to ensure lifespan ran)."""
+    return client.app
