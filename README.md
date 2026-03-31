@@ -264,7 +264,7 @@ These are rough guidelines — actual usage depends on codec, resolution, and so
 
 ## Tech Stack
 
-- **Backend**: Python 3.11, Flask, Gunicorn
+- **Backend**: Python 3.11, FastAPI, Uvicorn
 - **Frontend**: Vanilla JavaScript (single-page app, no build step)
 - **Database**: PostgreSQL (runtime settings, transcode history, media metadata)
 - **Transcoding**: FFmpeg with progress streaming
