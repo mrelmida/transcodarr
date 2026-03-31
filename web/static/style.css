@@ -232,7 +232,7 @@ body.theme-dark{
 .skeleton-text-sm{height:12px;width:50%;margin:4px 0}
 
 /* Logs */
-.log-container{height:60vh;overflow:auto;background:var(--bg-hover);padding:12px}
+.log-container{height:calc(100vh - 160px);overflow:auto;background:var(--bg-hover);padding:12px}
 #log-output{margin:0;font-family:var(--mono);font-size:12.5px;white-space:pre-wrap}
 
 /* Forms */
