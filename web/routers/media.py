@@ -164,6 +164,44 @@ def api_media_pending(
     return {"items": items, "count": len(items)}
 
 
+@router.get("/media/ignored/rich")
+def api_media_ignored_rich(
+    request: Request,
+    q: str = Query(default=""),
+    limit: int = Query(default=0),
+    media_type: str = Query(default="all"),
+):
+    """Return ignored files with full media metadata.
+
+    Like /media/pending but for ignored items. Pulls from both watch folder
+    (pending+ignored) and output folder (ready+ignored), returning only items
+    whose ignored flag is set.
+
+    Query params:
+      ?q=korra           — fuzzy search filter
+      ?limit=10          — max items returned
+      ?media_type=movie  — "movie", "tv", or "all" (default)
+    """
+    s = request.app.state.settings
+    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
+    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
+
+    items = []
+
+    # Pending items from watch folder (have ignored field already)
+    if watch_root:
+        if media_type in ("movie", "all"):
+            items.extend(scan_pending_movies(watch_root, temp_root))
+        if media_type in ("tv", "all"):
+            items.extend(scan_pending_tv(watch_root, temp_root))
+
+    # Keep only ignored items
+    items = [i for i in items if i.get("ignored")]
+
+    items = apply_filters(items, q=q, limit=limit)
+    return {"items": items, "count": len(items)}
+
+
 @router.get("/media/tv/debug")
 def api_media_tv_debug(request: Request):
     """Debug endpoint to diagnose pending TV detection issues."""
