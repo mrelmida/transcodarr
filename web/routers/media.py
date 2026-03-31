@@ -123,6 +123,47 @@ def api_media_tv(
     return {"items": items, "count": len(items), "scanning": scanning}
 
 
+@router.get("/media/pending")
+def api_media_pending(
+    request: Request,
+    q: str = Query(default=""),
+    limit: int = Query(default=0),
+    media_type: str = Query(default="all"),
+):
+    """Return only pending/queued/processing files from the watch folder.
+
+    Query params:
+      ?q=korra           — fuzzy search filter
+      ?limit=10          — max items returned
+      ?media_type=movie  — "movie", "tv", or "all" (default)
+
+    Designed for external agents to discover files awaiting transcode.
+    """
+    s = request.app.state.settings
+    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
+    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
+
+    items = []
+
+    if watch_root:
+        if media_type in ("movie", "all"):
+            items.extend(scan_pending_movies(watch_root, temp_root))
+        if media_type in ("tv", "all"):
+            items.extend(scan_pending_tv(watch_root, temp_root))
+
+    if temp_root:
+        if media_type in ("movie", "all"):
+            items.extend(scan_processing_movies(temp_root, watch_root))
+        if media_type in ("tv", "all"):
+            items.extend(scan_processing_tv(temp_root, watch_root))
+
+    # Filter out ignored items
+    items = [i for i in items if not i.get("ignored")]
+
+    items = apply_filters(items, q=q, limit=limit)
+    return {"items": items, "count": len(items)}
+
+
 @router.get("/media/tv/debug")
 def api_media_tv_debug(request: Request):
     """Debug endpoint to diagnose pending TV detection issues."""
