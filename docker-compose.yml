@@ -13,7 +13,6 @@ services:
       - ${DATA_PATH:-./data}:/app/data
       - ${CONFIG_PATH:-./config}:/app/config
     environment:
-      - FLASK_ENV=production
       - ENV_FILE_PATH=./config/.env
       - WATCH_FOLDER=/downloads
       - OUTPUT_FOLDER=/output

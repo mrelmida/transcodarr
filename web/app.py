@@ -1,2 +1,123 @@
-from . import create_app
-app = create_app()  # gunicorn will import "web.app:app"
+# web/app.py
+# FastAPI application entry point
+import atexit
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.responses import HTMLResponse
+
+from transcodarr_core import Settings
+from transcodarr_core.logging_setup import setup_logging, archive_and_clear_once
+from transcodarr_core.worker_pool import WorkerPoolManager, set_worker_pool, cleanup_stale_temp_files
+from transcodarr_core.pipeline import transcode_file
+from env_flag import get_stop_flag, set_stop_flag
+
+from web.shared_state import start_stats_collector
+from web.routers import (
+    control, settings, media, transcode, workers,
+    subtitles, connections, webhooks, system,
+)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup ──
+    log_file = os.path.abspath("logs/transcode.log")
+    archive_dir = os.path.abspath("logs/archive")
+
+    os.makedirs("logs", exist_ok=True)
+    archive_and_clear_once(log_file, archive_dir)
+    setup_logging(log_file)
+
+    s = Settings()
+    app.state.settings = s
+    app.state.log_path = log_file
+    app.state.stop_flag_fn = get_stop_flag
+    app.state.set_stop_flag_fn = set_stop_flag
+    app.state.run_lock_path = "/tmp/transcodarr.run"
+
+    # Clean up stale temp files
+    if s.MEDIA_TEMP_FOLDER:
+        try:
+            cleaned = cleanup_stale_temp_files(s.MEDIA_TEMP_FOLDER)
+            if cleaned > 0:
+                logging.info("[STARTUP] Cleaned up %d stale temp files", cleaned)
+        except Exception as e:
+            logging.warning("[STARTUP] Failed to cleanup temp files: %s", e)
+
+    # Initialize worker pool
+    from transcodarr_core.config import get_setting
+    try:
+        init_mw = int(get_setting("MANUAL_WORKERS", s.MANUAL_WORKERS))
+    except (ValueError, TypeError):
+        init_mw = s.MANUAL_WORKERS
+    try:
+        init_aw = int(get_setting("AUTO_WORKERS", s.AUTO_WORKERS))
+    except (ValueError, TypeError):
+        init_aw = s.AUTO_WORKERS
+
+    worker_pool = WorkerPoolManager(
+        manual_workers=init_mw,
+        auto_workers=init_aw,
+        transcode_fn=transcode_file,
+        settings=s,
+    )
+    worker_pool.start()
+    app.state.worker_pool = worker_pool
+    set_worker_pool(worker_pool)
+
+    # Start system stats collector
+    start_stats_collector()
+
+    yield
+
+    # ── Shutdown ──
+    if worker_pool:
+        worker_pool.stop(wait=True)
+
+
+# ── Create app ──
+app = FastAPI(lifespan=lifespan)
+
+# Static files
+_web_dir = Path(__file__).parent
+app.mount("/static", StaticFiles(directory=_web_dir / "static"), name="static")
+
+# Templates
+_templates = Jinja2Templates(directory=_web_dir / "templates")
+
+# Include API routers
+app.include_router(control.router, prefix="/api")
+app.include_router(settings.router, prefix="/api")
+app.include_router(media.router, prefix="/api")
+app.include_router(transcode.router, prefix="/api")
+app.include_router(workers.router, prefix="/api")
+app.include_router(subtitles.router, prefix="/api")
+app.include_router(connections.router, prefix="/api")
+app.include_router(webhooks.router, prefix="/api")
+app.include_router(system.router, prefix="/api")
+
+
+# ── UI route ──
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    s = request.app.state.settings
+    return _templates.TemplateResponse(
+        "ui.html",
+        {
+            "request": request,
+            "api_base": "/api",
+            "ui_boot": {"watch": s.WATCH_FOLDER, "output": s.OUTPUT_FOLDER},
+        },
+    )
+
+
+# ── Health check ──
+@app.get("/health")
+def health():
+    return {"status": "ok"}

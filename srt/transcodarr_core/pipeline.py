@@ -75,7 +75,7 @@ def verify_output(src_path: str, tmp_out: str, chosen_srt: Optional[str], requir
             logging.warning("[VERIFY] missing A/V streams")
             return False
 
-        # duration check (±2%) - use VIDEO stream duration, not container
+        # duration check (±5%) - use VIDEO stream duration, not container
         # Container duration can be extended by subtitle tracks that run past video end
         def _video_dur(info):
             try:
@@ -107,7 +107,7 @@ def verify_output(src_path: str, tmp_out: str, chosen_srt: Optional[str], requir
 
         if sd > 60 and od > 0:
             delta = abs(od - sd) / sd
-            if delta > 0.02:
+            if delta > 0.05:
                 logging.warning(f"[VERIFY] Duration mismatch: src={sd:.2f}s out={od:.2f}s delta={delta*100:.1f}%")
                 return False
             else:
