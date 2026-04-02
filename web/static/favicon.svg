@@ -6,14 +6,10 @@
     </linearGradient>
   </defs>
 
-  <!-- Background -->
   <rect width="32" height="32" rx="7" fill="#1E293B"/>
-  <!-- Top arrow -->
   <path d="M 5 12 L 23 12" stroke="url(#arrowGrad)" stroke-width="2.5" stroke-linecap="round"/>
   <path d="M 19 8 L 25 12 L 19 16" fill="none" stroke="#F97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- Bottom arrow faded -->
   <path d="M 27 20 L 9 20" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
   <path d="M 13 16 L 7 20 L 13 24" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
-  <!-- Center dot -->
   <circle cx="16" cy="16" r="2.5" fill="#F97316"/>
 </svg>
