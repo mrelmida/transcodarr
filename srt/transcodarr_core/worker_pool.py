@@ -172,6 +172,7 @@ class TranscodeJob:
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
     future: Optional[Future] = None
+    batch_id: Optional[str] = None
 
     # Metadata for display
     title: Optional[str] = None
@@ -184,6 +185,7 @@ class TranscodeJob:
         """Convert job to dictionary for API response."""
         return {
             "job_id": self.job_id,
+            "batch_id": self.batch_id,
             "file_path": self.file_path,
             "media_type": self.media_type,
             "status": self.status.value,
@@ -239,6 +241,7 @@ class WorkerPoolManager:
         self._running = False
         self._processing_files: set = set()  # Files currently being processed
         self._processing_lock = threading.Lock()
+        self._batch_stop_flags: Dict[str, bool] = {}
 
         # Auto-job tracking
         self._auto_active_count = 0
@@ -510,9 +513,10 @@ class WorkerPoolManager:
         first = valid[0]
         with self._jobs_lock:
             self._job_counter += 1
-            job_id = f"batch_{self._job_counter}_{int(time.time())}"
+            batch_id = f"batch_{self._job_counter}_{int(time.time())}"
             job = TranscodeJob(
-                job_id=job_id,
+                job_id=batch_id,
+                batch_id=batch_id,
                 file_path=first["file_path"],
                 media_type=first.get("media_type", "movie"),
                 title=first.get("title"),
@@ -521,22 +525,28 @@ class WorkerPoolManager:
                 season=first.get("season"),
                 episode=first.get("episode"),
             )
-            self._jobs[job_id] = job
+            self._jobs[batch_id] = job
 
         self._add_processing_file(first["file_path"])
 
-        future = self._manual_executor.submit(self._run_batch, job, valid)
+        future = self._manual_executor.submit(self._run_batch, job, valid, batch_id)
         job.future = future
 
-        logging.info("[WORKER_POOL] Submitted batch job %s (%d files)", job_id, len(valid))
+        logging.info("[WORKER_POOL] Submitted batch job %s (%d files)", batch_id, len(valid))
         return job
 
-    def _run_batch(self, first_job: TranscodeJob, items: List[dict]) -> None:
+    def _run_batch(self, first_job: TranscodeJob, items: List[dict], batch_id: str) -> None:
         """Run a batch of transcode items sequentially in one worker thread."""
         import traceback
         total = len(items)
         for idx, item in enumerate(items):
             fp = item["file_path"]
+
+            # Check batch stop flag before starting each item
+            if idx > 0 and self._batch_stop_flags.get(batch_id, False):
+                self._cancel_remaining_batch_items(items[idx:], batch_id)
+                _log_info("[WORKER_POOL] Batch %s stopped by user at item %d/%d", batch_id, idx + 1, total)
+                break
 
             if idx == 0:
                 job = first_job
@@ -547,6 +557,7 @@ class WorkerPoolManager:
                     job_id = f"batch_{self._job_counter}_{int(time.time())}"
                     job = TranscodeJob(
                         job_id=job_id,
+                        batch_id=batch_id,
                         file_path=fp,
                         media_type=item.get("media_type", "movie"),
                         title=item.get("title"),
@@ -593,6 +604,14 @@ class WorkerPoolManager:
             finally:
                 self._remove_processing_file(fp)
 
+            # Check stop flag after each item completes
+            if self._batch_stop_flags.get(batch_id, False):
+                if idx + 1 < total:
+                    self._cancel_remaining_batch_items(items[idx + 1:], batch_id)
+                    _log_info("[WORKER_POOL] Batch %s stopped by user after item %d/%d", batch_id, idx + 1, total)
+                break
+
+        self._batch_stop_flags.pop(batch_id, None)
         _log_info("[WORKER_POOL] ========== Batch complete (%d items) ==========", total)
 
     def _run_job(self, job: TranscodeJob) -> None:
@@ -689,6 +708,40 @@ class WorkerPoolManager:
 
         logging.info("[WORKER_POOL] Cancelled job %s", job_id)
         return True
+
+    def get_batch_jobs(self, batch_id: str) -> List[TranscodeJob]:
+        """Get all jobs belonging to a batch."""
+        with self._jobs_lock:
+            return [j for j in self._jobs.values() if j.batch_id == batch_id]
+
+    def stop_batch(self, batch_id: str) -> bool:
+        """Stop a running batch. Kills current FFmpeg and prevents remaining items."""
+        self._batch_stop_flags[batch_id] = True
+        for job in self.get_batch_jobs(batch_id):
+            if job.status == JobStatus.RUNNING:
+                terminate_proc_for_file(job.file_path)
+        return True
+
+    def _cancel_remaining_batch_items(self, remaining_items: List[dict], batch_id: str) -> None:
+        """Create CANCELLED job entries for remaining batch items that won't run."""
+        for item in remaining_items:
+            with self._jobs_lock:
+                self._job_counter += 1
+                job_id = f"batch_{self._job_counter}_{int(time.time())}"
+                job = TranscodeJob(
+                    job_id=job_id,
+                    batch_id=batch_id,
+                    file_path=item["file_path"],
+                    media_type=item.get("media_type", "movie"),
+                    status=JobStatus.CANCELLED,
+                    completed_at=time.time(),
+                    title=item.get("title"),
+                    year=item.get("year"),
+                    show=item.get("show"),
+                    season=item.get("season"),
+                    episode=item.get("episode"),
+                )
+                self._jobs[job_id] = job
 
     def cleanup_old_jobs(self, max_age_hours: int = 24) -> int:
         """

@@ -1321,14 +1321,24 @@ def background_scan(media_type: str, root: Path):
         _media_cache[media_type]["scanning"] = False
 
 
-def apply_filters(items: list[dict], q: str = "", limit: int = 0) -> list[dict]:
-    """Optional fuzzy filter and limiter."""
+_SORT_FIELDS = {"mtime", "size_gb", "title", "year"}
+
+
+def apply_filters(
+    items: list[dict], q: str = "", limit: int = 0,
+    sort: str = "", sort_order: str = "asc",
+) -> list[dict]:
+    """Optional fuzzy filter, sort, and limiter."""
     if q:
         q_lower = q.lower()
         def _match(d: dict):
             blob = " ".join(str(v) for v in d.values() if isinstance(v, (str, int)))
             return q_lower in blob.lower()
         items = [d for d in items if _match(d)]
+
+    if sort and sort in _SORT_FIELDS:
+        reverse = sort_order.lower() == "desc"
+        items = sorted(items, key=lambda d: (d.get(sort) is None, d.get(sort, "")), reverse=reverse)
 
     if limit and limit > 0:
         items = items[:limit]

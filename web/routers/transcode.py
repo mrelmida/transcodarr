@@ -162,12 +162,45 @@ def api_stop_transcode(request: Request, data: dict = Body(default={})):
     worker_pool._remove_processing_file(file_path)
 
     cancelled = False
+    batch_stopped = False
     for job in worker_pool.get_jobs_for_file(file_path):
         if job.status.value in ("queued", "running"):
             if worker_pool.cancel_job(job.job_id):
                 cancelled = True
+        if job.batch_id and not batch_stopped:
+            worker_pool.stop_batch(job.batch_id)
+            batch_stopped = True
 
-    if killed or cancelled:
-        return {"status": "stopped", "killed": killed, "cancelled": cancelled}
+    if killed or cancelled or batch_stopped:
+        return {"status": "stopped", "killed": killed, "cancelled": cancelled, "batch_stopped": batch_stopped}
     else:
         return JSONResponse({"error": "No active transcode found for this file"}, status_code=404)
+
+
+@router.get("/transcode/batch/{batch_id}")
+def api_batch_info(batch_id: str, request: Request):
+    """Get all jobs in a batch."""
+    worker_pool = request.app.state.worker_pool
+    if not worker_pool:
+        return JSONResponse({"error": "Worker pool not initialized"}, status_code=500)
+
+    jobs = worker_pool.get_batch_jobs(batch_id)
+    if not jobs:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+
+    return {"batch_id": batch_id, "jobs": [j.to_dict() for j in jobs], "count": len(jobs)}
+
+
+@router.post("/transcode/batch/{batch_id}/stop")
+def api_stop_batch(batch_id: str, request: Request):
+    """Stop a running batch and cancel remaining items."""
+    worker_pool = request.app.state.worker_pool
+    if not worker_pool:
+        return JSONResponse({"error": "Worker pool not initialized"}, status_code=500)
+
+    jobs = worker_pool.get_batch_jobs(batch_id)
+    if not jobs:
+        return JSONResponse({"error": "Batch not found"}, status_code=404)
+
+    worker_pool.stop_batch(batch_id)
+    return {"status": "stopping", "batch_id": batch_id}

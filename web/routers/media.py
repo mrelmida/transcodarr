@@ -31,6 +31,8 @@ def api_media_movies(
     q: str = Query(default=""),
     limit: int = Query(default=0),
     refresh: str = Query(default=""),
+    sort: str = Query(default=""),
+    sort_order: str = Query(default="asc"),
 ):
     """Return cached movies instantly, trigger background refresh if needed."""
     s = request.app.state.settings
@@ -69,7 +71,7 @@ def api_media_movies(
             t = Thread(target=background_scan, args=("movies", root), daemon=True)
             t.start()
 
-    items = apply_filters(items, q=q, limit=limit)
+    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
     scanning = media_cache["movies"]["scanning"]
     return {"items": items, "count": len(items), "scanning": scanning}
 
@@ -80,6 +82,8 @@ def api_media_tv(
     q: str = Query(default=""),
     limit: int = Query(default=0),
     refresh: str = Query(default=""),
+    sort: str = Query(default=""),
+    sort_order: str = Query(default="asc"),
 ):
     """Return cached TV instantly, trigger background refresh if needed."""
     s = request.app.state.settings
@@ -118,7 +122,7 @@ def api_media_tv(
             t = Thread(target=background_scan, args=("tv", root), daemon=True)
             t.start()
 
-    items = apply_filters(items, q=q, limit=limit)
+    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
     scanning = media_cache["tv"]["scanning"]
     return {"items": items, "count": len(items), "scanning": scanning}
 
@@ -129,6 +133,8 @@ def api_media_pending(
     q: str = Query(default=""),
     limit: int = Query(default=0),
     media_type: str = Query(default="all"),
+    sort: str = Query(default=""),
+    sort_order: str = Query(default="asc"),
 ):
     """Return only pending/queued/processing files from the watch folder.
 
@@ -160,7 +166,7 @@ def api_media_pending(
     # Filter out ignored items
     items = [i for i in items if not i.get("ignored")]
 
-    items = apply_filters(items, q=q, limit=limit)
+    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
     return {"items": items, "count": len(items)}
 
 

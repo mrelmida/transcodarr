@@ -222,10 +222,16 @@ All endpoints are under `/api` and require the `X-API-Key` header set to your `A
 | `/api/status` | GET | Running state |
 | `/api/settings` | GET/POST | Read/write all settings |
 | `/api/transcode/manual` | POST | Queue a single file for transcode |
-| `/api/transcode/batch` | POST | Queue multiple files (sequential) |
+| `/api/transcode/batch` | POST | Queue multiple files (sequential, returns `batch_id`) |
+| `/api/transcode/batch/{batch_id}` | GET | List all jobs in a batch |
+| `/api/transcode/batch/{batch_id}/stop` | POST | Stop a batch — kills current file + cancels remaining |
+| `/api/transcode/stop` | POST | Stop a file — also stops its batch if part of one |
 | `/api/transcode/jobs` | GET | List all transcode jobs + progress |
-| `/api/media/movies` | GET | List movies in output folder |
-| `/api/media/tv` | GET | List TV episodes in output folder |
+| `/api/transcode/jobs/{job_id}` | GET | Get a specific job |
+| `/api/transcode/jobs/{job_id}` | DELETE | Cancel a queued job |
+| `/api/media/movies` | GET | List movies (supports `sort`, `sort_order`, `q`, `limit`) |
+| `/api/media/tv` | GET | List TV episodes (supports `sort`, `sort_order`, `q`, `limit`) |
+| `/api/media/pending` | GET | Pending files awaiting transcode (supports `sort`, `sort_order`, `q`, `limit`, `media_type`) |
 | `/api/subtitles/search` | POST | Manually trigger subtitle search |
 | `/api/system/stats` | GET | CPU/RAM/disk usage + 24h history |
 | `/api/connections` | GET | Integration connection status |
@@ -233,6 +239,51 @@ All endpoints are under `/api` and require the `X-API-Key` header set to your `A
 | `/api/webhook/sonarr` | POST | Sonarr post-import webhook |
 | `/api/workers/status` | GET | Worker pool state |
 | `/api/logs/tail` | GET | Live log tail (rotation-aware) |
+
+### Sorting & Filtering
+
+Media endpoints (`/api/media/movies`, `/api/media/tv`, `/api/media/pending`) support these query parameters:
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `q` | any string | Substring search across all fields |
+| `sort` | `mtime`, `size_gb`, `title`, `year` | Sort field |
+| `sort_order` | `asc`, `desc` | Sort direction (default: `asc`) |
+| `limit` | integer | Max items returned (applied after sort) |
+| `media_type` | `movie`, `tv`, `all` | Filter by type (pending endpoint only) |
+
+Example — get the 50 oldest pending movies by last-modified time:
+```
+GET /api/media/pending?media_type=movie&sort=mtime&sort_order=asc&limit=50
+```
+
+### Batch Transcoding
+
+Submit a batch to transcode multiple files sequentially on one worker:
+
+```bash
+curl -X POST http://localhost:5025/api/transcode/batch \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"items": [
+    {"file_path": "/downloads/movies/Movie A (2020)/Movie A (2020).mkv", "media_type": "movie"},
+    {"file_path": "/downloads/movies/Movie B (2019)/Movie B (2019).mkv", "media_type": "movie"}
+  ]}'
+```
+
+The response includes a `batch_id` you can use to monitor or stop the batch:
+
+```bash
+# Check batch progress
+curl http://localhost:5025/api/transcode/batch/batch_1_1712345678 \
+  -H "X-API-Key: YOUR_KEY"
+
+# Stop the batch (kills current file, cancels remaining)
+curl -X POST http://localhost:5025/api/transcode/batch/batch_1_1712345678/stop \
+  -H "X-API-Key: YOUR_KEY"
+```
+
+Stopping a single file via `/api/transcode/stop` also stops the entire batch it belongs to.
 
 ## Webhooks (optional)
 
