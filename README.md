@@ -72,7 +72,7 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 ```bash
 cp .env.example .env
 # Edit .env — set PROCESSING_PATH, OUTPUT_PATH, POSTGRES_PASSWORD, FLASK_SECRET, ADMIN_API_KEY
-docker compose up -d --build
+docker compose -f docker-compose.postgres.yml up -d --build
 ```
 
 ### Option B: External Postgres
@@ -80,7 +80,7 @@ docker compose up -d --build
 ```bash
 cp .env.example .env
 # Edit .env — set POSTGRES_HOST to your DB server, plus all other required vars
-docker compose -f docker-compose.external-db.yml up -d --build
+docker compose up -d --build
 ```
 
 ### Configure
