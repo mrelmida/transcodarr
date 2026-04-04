@@ -214,10 +214,6 @@ SETTINGS_SCHEMA = {
                 {"value": "8", "label": "8"},
                 {"value": "0", "label": "Auto (all cores)"},
             ]},
-            "COMPRESSION_TIERS_ENABLED": {"label": "Compression Tiers", "type": "select", "group": "advanced", "options": [
-                {"value": "false", "label": "Disabled"},
-                {"value": "true", "label": "Enabled"},
-            ]},
         }
     },
     "radarr": {

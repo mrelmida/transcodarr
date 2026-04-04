@@ -258,6 +258,24 @@ def _run_migrations(conn):
         logging.info("[DATABASE] Migration: encoding_presets table created")
         _seed_default_presets(cursor)
 
+    # Migration: Add auto_rules column to encoding_presets if missing
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.columns
+            WHERE table_name = 'encoding_presets' AND column_name = 'auto_rules'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Adding auto_rules column to encoding_presets...")
+        cursor.execute("ALTER TABLE encoding_presets ADD COLUMN auto_rules JSONB DEFAULT NULL")
+        logging.info("[DATABASE] Migration: auto_rules column added")
+
+    # Migration: Seed Auto preset if missing
+    cursor.execute("SELECT id FROM encoding_presets WHERE name = 'Auto'")
+    if not cursor.fetchone():
+        logging.info("[DATABASE] Migration: Seeding Auto preset...")
+        _seed_auto_preset(cursor)
+
     cursor.close()
     conn.commit()
 
@@ -905,17 +923,39 @@ _BASE_PRESET_SETTINGS = {
     "TARGET_AUDIO_NORMALIZE": "true",
     "FFMPEG_THREADS": "1",
     "X264_THREADS": "4",
-    "COMPRESSION_TIERS_ENABLED": "false",
     "REQUIRE_SUBTITLES": "true",
 }
 
 DEFAULT_PRESETS = [
-    {"name": "Full Transcode", "settings": {**_BASE_PRESET_SETTINGS}},
     {"name": "Audio Only", "settings": {**_BASE_PRESET_SETTINGS, "VIDEO_STREAM_MODE": "copy"}},
     {"name": "Remux + Subs", "settings": {**_BASE_PRESET_SETTINGS, "VIDEO_STREAM_MODE": "copy", "AUDIO_STREAM_MODE": "copy"}},
     {"name": "4K Downscale", "settings": {**_BASE_PRESET_SETTINGS, "TARGET_RESOLUTION": "1080p_max"}},
     {"name": "High Quality", "settings": {**_BASE_PRESET_SETTINGS, "TARGET_PRESET": "slow", "TARGET_CRF": "19"}},
 ]
+
+
+_DEFAULT_AUTO_RULES = {
+    "fallback_preset_id": None,  # resolved at seed time to "Audio Only"
+    "rules": [
+        {
+            "name": "4K Content",
+            "conditions": {"resolution": "above_1080p", "video_codec": None, "media_type": None},
+            "target_preset_id": None,  # resolved to "4K Downscale"
+        },
+        {
+            "name": "Legacy Codecs",
+            "conditions": {"resolution": None, "video_codec": ["mpeg2video", "mpeg4", "wmv3", "vc1"], "media_type": None},
+            "target_preset_id": None,  # resolved to "4K Downscale"
+        },
+    ],
+}
+
+_AUTO_RULE_PRESET_MAP = {
+    "4K Content": "4K Downscale",
+    "Legacy Codecs": "4K Downscale",
+}
+
+_AUTO_FALLBACK_PRESET = "Audio Only"
 
 
 def _seed_default_presets(cursor):
@@ -929,16 +969,95 @@ def _seed_default_presets(cursor):
             (p["name"], Json(p["settings"])),
         )
     logging.info("[DATABASE] Seeded %d default encoding presets", len(DEFAULT_PRESETS))
+    _seed_auto_preset(cursor)
+
+
+def _seed_auto_preset(cursor):
+    """Insert Auto preset with rules referencing other presets by name."""
+    # Look up preset IDs by name
+    cursor.execute("SELECT id, name FROM encoding_presets WHERE name IN %s",
+                   (tuple(list(_AUTO_RULE_PRESET_MAP.values()) + ["4K Downscale"]),))
+    name_to_id = {row[0]: row[1] for row in cursor.fetchall()}
+    # Flip: name -> id
+    name_to_id = {}
+    cursor.execute("SELECT id, name FROM encoding_presets")
+    for row in cursor.fetchall():
+        name_to_id[row[1]] = row[0]
+
+    import copy
+    rules_data = copy.deepcopy(_DEFAULT_AUTO_RULES)
+    for rule in rules_data["rules"]:
+        target_name = _AUTO_RULE_PRESET_MAP.get(rule["name"])
+        if target_name and target_name in name_to_id:
+            rule["target_preset_id"] = name_to_id[target_name]
+    rules_data["fallback_preset_id"] = name_to_id.get(_AUTO_FALLBACK_PRESET)
+
+    cursor.execute(
+        "INSERT INTO encoding_presets (name, is_default, settings, auto_rules) VALUES (%s, TRUE, %s, %s)",
+        ("Auto", Json({**_BASE_PRESET_SETTINGS}), Json(rules_data)),
+    )
+    auto_id = None
+    cursor.execute("SELECT id FROM encoding_presets WHERE name = 'Auto'")
+    row = cursor.fetchone()
+    if row:
+        auto_id = row[0]
+
+    # Set Auto as active preset if no active preset is set
+    if auto_id:
+        cursor.execute("SELECT value FROM settings WHERE key = 'ACTIVE_PRESET_ID'")
+        if not cursor.fetchone():
+            cursor.execute(
+                "INSERT INTO settings (key, value, description) VALUES (%s, %s, %s)",
+                ("ACTIVE_PRESET_ID", str(auto_id), "Currently active encoding preset"),
+            )
+    logging.info("[DATABASE] Seeded Auto preset with default rules")
 
 
 def get_encoding_presets() -> List[Dict]:
     """Get all encoding presets, defaults first then by name."""
     with get_cursor() as cursor:
         cursor.execute(
-            "SELECT id, name, is_default, settings, created_at, updated_at "
+            "SELECT id, name, is_default, settings, auto_rules, created_at, updated_at "
             "FROM encoding_presets ORDER BY is_default DESC, name ASC"
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_encoding_preset(preset_id: int) -> Optional[Dict]:
+    """Get a single preset by ID."""
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT id, name, is_default, settings, auto_rules, created_at, updated_at "
+            "FROM encoding_presets WHERE id = %s", (preset_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_auto_preset() -> Optional[Dict]:
+    """Get the Auto preset (the one with auto_rules set)."""
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT id, name, is_default, settings, auto_rules, created_at, updated_at "
+            "FROM encoding_presets WHERE auto_rules IS NOT NULL LIMIT 1"
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def save_auto_rules(rules_data: dict) -> bool:
+    """Update the Auto preset's rules."""
+    try:
+        with get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE encoding_presets SET auto_rules = %s, updated_at = %s "
+                "WHERE name = 'Auto' AND is_default = TRUE",
+                (Json(rules_data), time.time()),
+            )
+            return cursor.rowcount > 0
+    except Exception as e:
+        logging.error("[DATABASE] Failed to save auto rules: %s", e)
+        return False
 
 
 def create_encoding_preset(name: str, settings: dict) -> Optional[Dict]:
@@ -990,6 +1109,11 @@ def restore_default_presets() -> int:
                     (p["name"], Json(p["settings"])),
                 )
                 count += 1
+        # Restore Auto preset if missing
+        cursor.execute("SELECT id FROM encoding_presets WHERE name = 'Auto'")
+        if not cursor.fetchone():
+            _seed_auto_preset(cursor)
+            count += 1
     if count:
         logging.info("[DATABASE] Restored %d default encoding presets", count)
     return count

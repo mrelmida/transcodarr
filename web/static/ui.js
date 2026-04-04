@@ -1699,6 +1699,7 @@ async function loadTV(forceRefresh = false){
       settingsOriginal = {...data.values};
       settingsModified = {...data.values};
       encodingPresets = data.encoding_presets || [];
+      activePresetId = data.active_preset_id || null;
 
       renderSettingsNav();
       // Show first section by default
@@ -1865,7 +1866,6 @@ async function loadTV(forceRefresh = false){
     container.appendChild(strip);
 
     renderPresetCards();
-    detectActivePreset();
 
     // Wire preset form
     $("#btn-new-preset").addEventListener("click", () => {
@@ -1882,7 +1882,25 @@ async function loadTV(forceRefresh = false){
     });
     $("#btn-restore-presets").addEventListener("click", () => restoreDefaultPresets());
 
-    // 2. Two-column field groups
+    // 2. Content area — Auto rules editor OR encoding fields
+    const contentArea = document.createElement("div");
+    contentArea.id = "encoding-content-area";
+    container.appendChild(contentArea);
+
+    const isAutoActive = _isAutoPresetActive();
+    if (isAutoActive) {
+      renderAutoRulesPanel(contentArea);
+    } else {
+      renderEncodingFields(contentArea, section);
+    }
+  }
+
+  function _isAutoPresetActive() {
+    const autoPreset = encodingPresets.find(p => p.auto_rules);
+    return autoPreset && autoPreset.id === activePresetId;
+  }
+
+  function renderEncodingFields(container, section) {
     const groups = {video: [], audio: [], advanced: []};
     for (const [fieldKey, field] of Object.entries(section.fields)) {
       const group = field.group || "advanced";
@@ -1892,7 +1910,6 @@ async function loadTV(forceRefresh = false){
     const columns = document.createElement("div");
     columns.className = "encoding-columns";
 
-    // Video group
     const videoGroup = document.createElement("div");
     videoGroup.className = "encoding-group";
     videoGroup.innerHTML = `<div class="encoding-group-title">Video</div>`;
@@ -1902,7 +1919,6 @@ async function loadTV(forceRefresh = false){
     videoGroup.appendChild(videoFields);
     columns.appendChild(videoGroup);
 
-    // Audio group
     const audioGroup = document.createElement("div");
     audioGroup.className = "encoding-group";
     audioGroup.innerHTML = `<div class="encoding-group-title">Audio</div>`;
@@ -1912,7 +1928,6 @@ async function loadTV(forceRefresh = false){
     audioGroup.appendChild(audioFields);
     columns.appendChild(audioGroup);
 
-    // Advanced group (full width)
     if (groups.advanced.length > 0) {
       const advGroup = document.createElement("div");
       advGroup.className = "encoding-group encoding-advanced";
@@ -1925,9 +1940,6 @@ async function loadTV(forceRefresh = false){
     }
 
     container.appendChild(columns);
-
-    // 3. Compression tiers
-    renderCompressionTiersPanel(container);
   }
 
   function renderPresetCards() {
@@ -1935,14 +1947,27 @@ async function loadTV(forceRefresh = false){
     if (!cardsDiv) return;
     cardsDiv.innerHTML = "";
 
-    for (const preset of encodingPresets) {
+    // Sort: Auto first, then other defaults, then custom
+    const sorted = [...encodingPresets].sort((a, b) => {
+      if (a.auto_rules && !b.auto_rules) return -1;
+      if (!a.auto_rules && b.auto_rules) return 1;
+      if (a.is_default && !b.is_default) return -1;
+      if (!a.is_default && b.is_default) return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    for (const preset of sorted) {
+      const isAuto = !!preset.auto_rules;
       const card = document.createElement("div");
-      card.className = `preset-card${preset.id === activePresetId ? " active" : ""}`;
+      card.className = `preset-card${preset.id === activePresetId ? " active" : ""}${isAuto ? " preset-auto" : ""}`;
       card.dataset.presetId = preset.id;
+
+      let badge = preset.is_default ? "Built-in" : "Custom";
+      if (isAuto) badge = "Dynamic";
 
       let html = `
         <div class="preset-card-name">${escapeHtml(preset.name)}</div>
-        <div class="preset-card-badge">${preset.is_default ? "Built-in" : "Custom"}</div>
+        <div class="preset-card-badge">${badge}</div>
       `;
       if (preset.id === activePresetId) {
         html += `<div class="preset-card-active">● Active</div>`;
@@ -1954,7 +1979,7 @@ async function loadTV(forceRefresh = false){
 
       card.addEventListener("click", (e) => {
         if (e.target.classList.contains("preset-card-delete")) return;
-        applyPreset(preset);
+        activatePreset(preset);
       });
 
       const delBtn = card.querySelector(".preset-card-delete");
@@ -1970,23 +1995,7 @@ async function loadTV(forceRefresh = false){
   }
 
   function detectActivePreset() {
-    activePresetId = null;
-    const encodingFields = settingsSchema.encoding ? Object.keys(settingsSchema.encoding.fields) : [];
-
-    for (const preset of encodingPresets) {
-      const settings = preset.settings || {};
-      let matches = true;
-      for (const key of encodingFields) {
-        if (key in settings) {
-          const current = settingsModified[key] || "";
-          const presetVal = settings[key] || "";
-          if (current !== presetVal) { matches = false; break; }
-        }
-      }
-      if (matches) { activePresetId = preset.id; break; }
-    }
-
-    // Update card active states
+    // Update card active states from activePresetId (set by backend)
     $$(".preset-card").forEach(card => {
       const id = parseInt(card.dataset.presetId);
       const isActive = id === activePresetId;
@@ -2003,14 +2012,33 @@ async function loadTV(forceRefresh = false){
     });
   }
 
-  function applyPreset(preset) {
-    const settings = preset.settings || {};
-    for (const [key, val] of Object.entries(settings)) {
-      settingsModified[key] = val;
-      const el = document.querySelector(`#set-${key}`);
-      if (el) el.value = val;
+  async function activatePreset(preset) {
+    try {
+      const r = await fetch(`${API}/presets/activate`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({preset_id: preset.id}),
+      });
+      if (!r.ok) return;
+      activePresetId = preset.id;
+
+      // For non-Auto presets, update form fields
+      if (!preset.auto_rules && preset.settings) {
+        for (const [key, val] of Object.entries(preset.settings)) {
+          settingsModified[key] = val;
+          settingsOriginal[key] = val;
+          const el = document.querySelector(`#set-${key}`);
+          if (el) el.value = val;
+        }
+      }
+
+      // Re-render encoding section to swap between rules editor and fields
+      if (currentSection === "encoding") {
+        showSettingsSection("encoding");
+      }
+    } catch (e) {
+      alert("Failed to activate preset: " + e.message);
     }
-    updateSettingsUI();
   }
 
   async function createPreset() {
@@ -2077,140 +2105,232 @@ async function loadTV(forceRefresh = false){
     }
   }
 
-  // ----- Compression Tiers Panel -----
-  async function renderCompressionTiersPanel(container) {
-    const panel = document.createElement("div");
-    panel.className = "compression-tiers-panel";
-    panel.id = "compression-tiers-panel";
-    panel.innerHTML = `<div style="text-align:center;color:var(--muted);padding:12px">Loading tiers...</div>`;
-    container.appendChild(panel);
+  // ----- Auto Rules Editor -----
+  async function renderAutoRulesPanel(container) {
+    container.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted)">Loading rules...</div>`;
 
-    // Check initial visibility from the toggle
-    const enabledSelect = document.getElementById("set-COMPRESSION_TIERS_ENABLED");
-    const isEnabled = enabledSelect ? enabledSelect.value === "true" : false;
-    panel.style.display = isEnabled ? "block" : "none";
-
-    // Wire up toggle to show/hide
-    if (enabledSelect) {
-      enabledSelect.addEventListener("change", () => {
-        panel.style.display = enabledSelect.value === "true" ? "block" : "none";
-      });
-    }
-
-    // Fetch tiers data
-    let tiersData;
+    let rulesData;
     try {
-      const r = await fetch(`${API}/compression-tiers`, {headers:{Accept:"application/json"}, cache:"no-store"});
-      tiersData = r.ok ? await r.json() : {tiers:[], preset_options:[], crf_options:[]};
+      const r = await fetch(`${API}/auto-rules`, {headers:{Accept:"application/json"}, cache:"no-store"});
+      rulesData = r.ok ? await r.json() : {rules:[], fallback_preset_id: null, target_presets:[]};
     } catch(e) {
-      tiersData = {tiers:[], preset_options:[], crf_options:[]};
+      rulesData = {rules:[], fallback_preset_id: null, target_presets:[]};
     }
 
-    let tiers = tiersData.tiers || [];
-    const presetOpts = tiersData.preset_options || [];
-    const crfOpts = tiersData.crf_options || [];
+    let rules = rulesData.rules || [];
+    let fallbackId = rulesData.fallback_preset_id;
+    const targetPresets = rulesData.target_presets || [];
 
-    function renderTiersTable() {
+    const RESOLUTION_OPTIONS = [
+      {value: "", label: "Any"},
+      {value: "sd_below", label: "SD and below (\u2264480p)"},
+      {value: "720p_below", label: "720p and below"},
+      {value: "1080p_below", label: "1080p and below"},
+      {value: "above_1080p", label: "Above 1080p"},
+      {value: "4k_above", label: "4K+ (\u22652160p)"},
+    ];
+
+    const CODEC_OPTIONS = [
+      {value: "h264", label: "H.264"},
+      {value: "hevc", label: "H.265 (HEVC)"},
+      {value: "mpeg2video", label: "MPEG-2"},
+      {value: "mpeg4", label: "MPEG-4"},
+      {value: "wmv3", label: "WMV3"},
+      {value: "vc1", label: "VC-1"},
+      {value: "vp9", label: "VP9"},
+      {value: "av1", label: "AV1"},
+    ];
+
+    function presetSelect(selected, idx, field) {
+      let html = `<select class="rule-select" data-idx="${idx}" data-field="${field}">`;
+      for (const p of targetPresets) {
+        html += `<option value="${p.id}"${p.id === selected ? " selected" : ""}>${escapeHtml(p.name)}</option>`;
+      }
+      html += `</select>`;
+      return html;
+    }
+
+    function codecCheckboxes(selected, idx) {
+      const sel = new Set(selected || []);
+      return CODEC_OPTIONS.map(c =>
+        `<label class="codec-label"><input type="checkbox" class="rule-codec" data-idx="${idx}" value="${c.value}"${sel.has(c.value) ? " checked" : ""}> ${c.label}</label>`
+      ).join("");
+    }
+
+    function renderRules() {
       let html = `
-        <h4>Compression Tiers</h4>
-        <p class="tiers-desc">Override preset and CRF based on source file size. Larger files get slower presets for better compression; smaller files use faster presets.</p>
+        <div class="auto-rules-header">
+          <h4>Auto Rules</h4>
+          <p class="auto-rules-desc">Rules are evaluated top-to-bottom. The first matching rule determines which preset to use. All conditions within a rule must match (AND logic).</p>
+        </div>
       `;
 
-      if (tiers.length === 0) {
-        html += `<div class="tiers-empty">No tiers configured. Click "Add Tier" to create one.</div>`;
-      } else {
-        html += `<table class="tiers-table"><thead><tr>
-          <th>Min GB</th><th>Max GB</th><th>Preset</th><th>CRF</th><th></th>
-        </tr></thead><tbody>`;
-        tiers.forEach((tier, i) => {
-          const presetSelect = presetOpts.map(o =>
-            `<option value="${escapeHtml(o.value)}"${o.value === tier.preset ? " selected" : ""}>${escapeHtml(o.label)}</option>`
-          ).join("");
-          const crfSelect = crfOpts.map(o =>
-            `<option value="${escapeHtml(o.value)}"${o.value === (tier.crf||"") ? " selected" : ""}>${escapeHtml(o.label)}</option>`
-          ).join("");
-          html += `<tr>
-            <td><input type="number" class="tier-input" data-idx="${i}" data-field="min_gb" value="${tier.min_gb}" min="0" step="0.5"></td>
-            <td><input type="number" class="tier-input" data-idx="${i}" data-field="max_gb" value="${tier.max_gb}" min="0" step="0.5" placeholder="0 = unlimited"></td>
-            <td><select class="tier-select" data-idx="${i}" data-field="preset">${presetSelect}</select></td>
-            <td><select class="tier-select" data-idx="${i}" data-field="crf">${crfSelect}</select></td>
-            <td><button class="btn-delete-tier" data-idx="${i}" title="Remove tier">&times;</button></td>
-          </tr>`;
-        });
-        html += `</tbody></table>`;
+      if (rules.length === 0) {
+        html += `<div class="auto-rules-empty">No rules configured. All files will use the fallback preset.</div>`;
       }
 
-      html += `<div class="tiers-actions">
-        <button class="btn btn-ghost" id="btn-add-tier">+ Add Tier</button>
-        <button class="btn btn-primary" id="btn-save-tiers">Save Tiers</button>
-        <span class="tiers-status" id="tiers-status"></span>
-      </div>`;
+      rules.forEach((rule, i) => {
+        const c = rule.conditions || {};
+        html += `
+          <div class="auto-rule-card" data-idx="${i}">
+            <div class="auto-rule-header">
+              <span class="auto-rule-number">${i + 1}</span>
+              <input type="text" class="auto-rule-name" data-idx="${i}" value="${escapeHtml(rule.name || "")}" placeholder="Rule name...">
+              <div class="auto-rule-actions">
+                ${i > 0 ? `<button class="btn-rule-move" data-idx="${i}" data-dir="up" title="Move up">&#9650;</button>` : ""}
+                ${i < rules.length - 1 ? `<button class="btn-rule-move" data-idx="${i}" data-dir="down" title="Move down">&#9660;</button>` : ""}
+                <button class="btn-rule-delete" data-idx="${i}" title="Delete rule">&times;</button>
+              </div>
+            </div>
+            <div class="auto-rule-body">
+              <div class="auto-rule-conditions">
+                <div class="auto-rule-condition">
+                  <label>Resolution</label>
+                  <select class="rule-select" data-idx="${i}" data-field="resolution">
+                    ${RESOLUTION_OPTIONS.map(o => `<option value="${o.value}"${(c.resolution || "") === o.value ? " selected" : ""}>${o.label}</option>`).join("")}
+                  </select>
+                </div>
+                <div class="auto-rule-condition">
+                  <label>Media Type</label>
+                  <select class="rule-select" data-idx="${i}" data-field="media_type">
+                    <option value=""${!c.media_type ? " selected" : ""}>Any</option>
+                    <option value="movie"${c.media_type === "movie" ? " selected" : ""}>Movie</option>
+                    <option value="tv"${c.media_type === "tv" ? " selected" : ""}>TV</option>
+                  </select>
+                </div>
+                <div class="auto-rule-condition auto-rule-codecs">
+                  <label>Video Codec</label>
+                  <div class="codec-checkboxes">${codecCheckboxes(c.video_codec, i)}</div>
+                </div>
+              </div>
+              <div class="auto-rule-target">
+                <label>Use Preset</label>
+                ${presetSelect(rule.target_preset_id, i, "target_preset_id")}
+              </div>
+            </div>
+          </div>
+        `;
+      });
 
-      panel.innerHTML = html;
+      html += `
+        <div class="auto-rules-fallback">
+          <label>Fallback Preset</label>
+          <span class="auto-rules-fallback-hint">(used when no rule matches)</span>
+          ${presetSelect(fallbackId, -1, "fallback")}
+        </div>
+        <div class="auto-rules-actions">
+          <button class="btn btn-ghost" id="btn-add-rule">+ Add Rule</button>
+          <button class="btn btn-primary" id="btn-save-rules">Save Rules</button>
+          <span class="auto-rules-status" id="auto-rules-status"></span>
+        </div>
+      `;
 
-      // Wire up input/select change events
-      panel.querySelectorAll(".tier-input, .tier-select").forEach(el => {
+      container.innerHTML = html;
+
+      // Wire name inputs
+      container.querySelectorAll(".auto-rule-name").forEach(el => {
+        el.addEventListener("input", () => {
+          rules[parseInt(el.dataset.idx)].name = el.value;
+        });
+      });
+
+      // Wire condition selects
+      container.querySelectorAll(".rule-select").forEach(el => {
         el.addEventListener("change", () => {
           const idx = parseInt(el.dataset.idx);
           const field = el.dataset.field;
-          tiers[idx][field] = el.value;
+          if (field === "fallback") {
+            fallbackId = parseInt(el.value);
+          } else if (field === "target_preset_id") {
+            rules[idx].target_preset_id = parseInt(el.value);
+          } else if (field === "media_type") {
+            if (!rules[idx].conditions) rules[idx].conditions = {};
+            rules[idx].conditions.media_type = el.value || null;
+          } else if (field === "resolution") {
+            if (!rules[idx].conditions) rules[idx].conditions = {};
+            rules[idx].conditions.resolution = el.value || null;
+          }
         });
       });
 
-      // Wire up delete buttons
-      panel.querySelectorAll(".btn-delete-tier").forEach(btn => {
+      // Wire codec checkboxes
+      container.querySelectorAll(".rule-codec").forEach(el => {
+        el.addEventListener("change", () => {
+          const idx = parseInt(el.dataset.idx);
+          if (!rules[idx].conditions) rules[idx].conditions = {};
+          const checked = [];
+          container.querySelectorAll(`.rule-codec[data-idx="${idx}"]:checked`).forEach(c => checked.push(c.value));
+          rules[idx].conditions.video_codec = checked.length > 0 ? checked : null;
+        });
+      });
+
+      // Wire move buttons
+      container.querySelectorAll(".btn-rule-move").forEach(btn => {
         btn.addEventListener("click", () => {
-          tiers.splice(parseInt(btn.dataset.idx), 1);
-          renderTiersTable();
+          const idx = parseInt(btn.dataset.idx);
+          const dir = btn.dataset.dir;
+          const newIdx = dir === "up" ? idx - 1 : idx + 1;
+          if (newIdx < 0 || newIdx >= rules.length) return;
+          [rules[idx], rules[newIdx]] = [rules[newIdx], rules[idx]];
+          renderRules();
         });
       });
 
-      // Add tier button
-      const addBtn = panel.querySelector("#btn-add-tier");
+      // Wire delete buttons
+      container.querySelectorAll(".btn-rule-delete").forEach(btn => {
+        btn.addEventListener("click", () => {
+          rules.splice(parseInt(btn.dataset.idx), 1);
+          renderRules();
+        });
+      });
+
+      // Add rule
+      const addBtn = container.querySelector("#btn-add-rule");
       if (addBtn) {
         addBtn.addEventListener("click", () => {
-          const lastMax = tiers.length > 0 ? parseFloat(tiers[tiers.length-1].max_gb || 0) : 0;
-          tiers.push({min_gb: lastMax, max_gb: 0, preset: "medium", crf: ""});
-          renderTiersTable();
+          rules.push({
+            name: "",
+            conditions: {resolution: null, video_codec: null, media_type: null},
+            target_preset_id: targetPresets.length > 0 ? targetPresets[0].id : null,
+          });
+          renderRules();
         });
       }
 
-      // Save tiers button
-      const saveBtn = panel.querySelector("#btn-save-tiers");
+      // Save rules
+      const saveBtn = container.querySelector("#btn-save-rules");
       if (saveBtn) {
         saveBtn.addEventListener("click", async () => {
-          const statusEl = panel.querySelector("#tiers-status");
+          const statusEl = container.querySelector("#auto-rules-status");
           statusEl.textContent = "Saving...";
-          statusEl.className = "tiers-status";
+          statusEl.className = "auto-rules-status";
           try {
-            const r = await fetch(`${API}/compression-tiers`, {
+            const r = await fetch(`${API}/auto-rules`, {
               method: "POST",
               headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({tiers}),
+              body: JSON.stringify({rules, fallback_preset_id: fallbackId}),
             });
             const result = await r.json();
             if (r.ok) {
-              tiers = result.tiers || tiers;
               statusEl.textContent = "Saved!";
-              statusEl.className = "tiers-status success";
-              renderTiersTable();
+              statusEl.className = "auto-rules-status success";
             } else {
               statusEl.textContent = result.error || "Save failed";
-              statusEl.className = "tiers-status error";
+              statusEl.className = "auto-rules-status error";
             }
           } catch(e) {
             statusEl.textContent = "Network error";
-            statusEl.className = "tiers-status error";
+            statusEl.className = "auto-rules-status error";
           }
           setTimeout(() => {
-            const s = panel.querySelector("#tiers-status");
+            const s = container.querySelector("#auto-rules-status");
             if (s) s.textContent = "";
           }, 3000);
         });
       }
     }
 
-    renderTiersTable();
+    renderRules();
   }
 
   // ----- Connections Section -----

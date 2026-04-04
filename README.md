@@ -31,10 +31,10 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 ## Features
 
 **Transcoding**
-- Encoding presets — built-in profiles (Full Transcode, Audio Only, Remux + Subs, 4K Downscale, High Quality) plus custom user presets
+- Encoding presets — built-in profiles (Audio Only, Remux + Subs, 4K Downscale, High Quality) plus custom user presets
+- **Auto preset** — dynamic rule-based preset selection per-file based on resolution, video codec, and media type (movie vs TV)
 - Per-stream control — encode or copy (passthrough) video and audio independently
 - Configurable video codec (H.264, H.265, VP9, AV1), audio codec, container, resolution, preset, CRF
-- Compression tiers — automatically use slower presets for large files, faster for small ones
 - Dual worker pool: separate auto (watchdog) and manual (UI-triggered) workers, both resizable live
 - Batch transcode mode with batch tracking and stop controls for re-encoding existing libraries
 - Real-time progress tracking with percentage and file size
@@ -128,15 +128,17 @@ Database (UI settings) > Environment Variables > .env file > Defaults
 | `FFMPEG_THREADS` | `1` | FFmpeg thread count (0 = auto) |
 | `X264_THREADS` | `4` | x264 encoder thread count (0 = auto) |
 
-### Compression Tiers
+### Auto Preset Rules
 
-Override preset and CRF based on source file size. Configure in Settings > Encoding when the toggle is enabled.
+The built-in **Auto** preset dynamically selects the right encoding preset per-file based on source properties. Rules are evaluated top-to-bottom (first match wins) and are configurable in the UI.
 
-| Min GB | Max GB | Preset | CRF | Use Case |
-|--------|--------|--------|-----|----------|
-| 0 | 5 | fast | 23 | Web-DLs, already compressed |
-| 5 | 15 | medium | 21 | Standard Blu-ray rips |
-| 15 | *(unlimited)* | slow | 19 | Large remuxes, 4K content |
+Default rules:
+
+| Rule | Conditions | Target Preset |
+|------|-----------|---------------|
+| 4K Content | Above 1080p | 4K Downscale |
+| Legacy Codecs | codec in [mpeg2, mpeg4, wmv3, vc1] | 4K Downscale |
+| *Fallback* | *(no match)* | Audio Only |
 
 ### Worker Pool
 

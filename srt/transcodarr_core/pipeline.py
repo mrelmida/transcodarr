@@ -594,6 +594,11 @@ def transcode_file(file_path: str, settings: Settings):
             _meta_override = meta
 
         working_video = temp_source if is_reencode else file_path
+
+        # ---------- resolve Auto preset rules ----------
+        from .auto_preset import resolve_auto_preset
+        settings_override = resolve_auto_preset(working_video, meta)
+
         chosen_srt = pick_working_sub(
             video_path=working_video,
             initial_srt=extracted_srt or find_subtitle_file(working_video),
@@ -604,7 +609,8 @@ def transcode_file(file_path: str, settings: Settings):
         )
         if not chosen_srt:
             from .config import get_setting
-            require_subs = str(get_setting("REQUIRE_SUBTITLES", "true")).lower() == "true"
+            _req_val = (settings_override or {}).get("REQUIRE_SUBTITLES") or get_setting("REQUIRE_SUBTITLES", "true")
+            require_subs = str(_req_val).lower() == "true"
             if require_subs:
                 if not is_reencode:
                     with contextlib.suppress(Exception):
@@ -637,7 +643,8 @@ def transcode_file(file_path: str, settings: Settings):
 
         ffmpeg_input = temp_source if is_reencode else file_path
         run_ffmpeg(ffmpeg_input, chosen_srt, tmp_path, base_name, s, progress_file,
-                   register_path=file_path if is_reencode else "")
+                   register_path=file_path if is_reencode else "",
+                   settings_override=settings_override)
 
         # ---------- verify tmp BEFORE promotion ----------
         if not verify_output(ffmpeg_input, tmp_path, chosen_srt, require_subs=bool(chosen_srt)):

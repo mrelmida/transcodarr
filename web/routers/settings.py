@@ -5,14 +5,14 @@ import json
 import logging
 
 from web.shared_state import (
-    SETTINGS_SCHEMA, VALID_PRESETS, VALID_CRFS,
+    SETTINGS_SCHEMA,
     get_env_path,
 )
 from transcodarr_core.database import (
     get_all_settings, get_setting, set_setting,
-    get_encoding_presets, create_encoding_preset,
+    get_encoding_presets, get_encoding_preset, create_encoding_preset,
     update_encoding_preset, delete_encoding_preset,
-    restore_default_presets,
+    restore_default_presets, get_auto_preset, save_auto_rules,
 )
 from dotenv import dotenv_values
 
@@ -26,7 +26,7 @@ def api_get_settings(request: Request):
         db_values = get_all_settings()
         s = request.app.state.settings
 
-        result = {"schema": SETTINGS_SCHEMA, "values": {}, "encoding_presets": []}
+        result = {"schema": SETTINGS_SCHEMA, "values": {}, "encoding_presets": [], "active_preset_id": None}
 
         for section_key, section in SETTINGS_SCHEMA.items():
             for field_key in section["fields"]:
@@ -37,6 +37,13 @@ def api_get_settings(request: Request):
 
         try:
             result["encoding_presets"] = get_encoding_presets()
+        except Exception:
+            pass
+
+        try:
+            active_id = get_setting("ACTIVE_PRESET_ID")
+            if active_id:
+                result["active_preset_id"] = int(active_id)
         except Exception:
             pass
 
@@ -136,97 +143,69 @@ def api_migrate_settings_from_env():
     }
 
 
-@router.get("/compression-tiers")
-def api_get_compression_tiers():
-    """Return compression tiers config and options for the UI."""
-    enabled = get_setting("COMPRESSION_TIERS_ENABLED", "false")
-    tiers_json = get_setting("COMPRESSION_TIERS", "")
-    tiers = []
-    if tiers_json:
-        try:
-            tiers = json.loads(tiers_json)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    preset_options = [
-        {"value": "ultrafast", "label": "Ultrafast"},
-        {"value": "superfast", "label": "Superfast"},
-        {"value": "veryfast", "label": "Veryfast"},
-        {"value": "faster", "label": "Faster"},
-        {"value": "fast", "label": "Fast"},
-        {"value": "medium", "label": "Medium"},
-        {"value": "slow", "label": "Slow"},
-        {"value": "slower", "label": "Slower"},
-        {"value": "veryslow", "label": "Veryslow"},
-    ]
-    crf_options = [
-        {"value": "", "label": "Default"},
-        {"value": "18", "label": "18"},
-        {"value": "19", "label": "19"},
-        {"value": "20", "label": "20"},
-        {"value": "21", "label": "21"},
-        {"value": "22", "label": "22"},
-        {"value": "23", "label": "23"},
-        {"value": "24", "label": "24"},
-        {"value": "25", "label": "25"},
-        {"value": "26", "label": "26"},
-        {"value": "28", "label": "28"},
-        {"value": "30", "label": "30"},
-    ]
+@router.get("/auto-rules")
+def api_get_auto_rules():
+    """Return Auto preset rules and available presets for target dropdowns."""
+    auto = get_auto_preset()
+    rules_data = auto.get("auto_rules", {}) if auto else {}
+    presets = get_encoding_presets()
+    # Exclude Auto itself from target options
+    target_presets = [{"id": p["id"], "name": p["name"]} for p in presets if not p.get("auto_rules")]
     return {
-        "enabled": str(enabled).lower() == "true",
-        "tiers": tiers,
-        "preset_options": preset_options,
-        "crf_options": crf_options,
+        "rules": rules_data.get("rules", []),
+        "fallback_preset_id": rules_data.get("fallback_preset_id"),
+        "target_presets": target_presets,
+        "auto_preset_id": auto["id"] if auto else None,
     }
 
 
-@router.post("/compression-tiers")
-def api_save_compression_tiers(data: dict = Body(default={})):
-    """Validate and save compression tiers."""
-    tiers = data.get("tiers", [])
+@router.post("/auto-rules")
+def api_save_auto_rules(data: dict = Body(default={})):
+    """Validate and save Auto preset rules."""
+    rules = data.get("rules", [])
+    fallback_id = data.get("fallback_preset_id")
 
-    if not isinstance(tiers, list):
-        return JSONResponse({"error": "tiers must be a list"}, status_code=400)
+    if not isinstance(rules, list):
+        return JSONResponse({"error": "rules must be a list"}, status_code=400)
 
-    for i, tier in enumerate(tiers):
-        try:
-            min_gb = float(tier.get("min_gb", 0))
-            max_gb = float(tier.get("max_gb", 0))
-        except (ValueError, TypeError):
-            return JSONResponse({"error": f"Tier {i+1}: invalid size values"}, status_code=400)
+    # Validate each rule
+    valid_preset_ids = {p["id"] for p in get_encoding_presets() if not p.get("auto_rules")}
+    for i, rule in enumerate(rules):
+        target_id = rule.get("target_preset_id")
+        if not target_id or target_id not in valid_preset_ids:
+            return JSONResponse({"error": f"Rule {i+1}: invalid target preset"}, status_code=400)
+        conditions = rule.get("conditions", {})
 
-        if min_gb < 0:
-            return JSONResponse({"error": f"Tier {i+1}: min_gb cannot be negative"}, status_code=400)
-        if max_gb < 0:
-            return JSONResponse({"error": f"Tier {i+1}: max_gb cannot be negative"}, status_code=400)
-        if max_gb != 0 and max_gb <= min_gb:
-            return JSONResponse({"error": f"Tier {i+1}: max_gb must be greater than min_gb (or 0 for unlimited)"}, status_code=400)
+    if fallback_id and fallback_id not in valid_preset_ids:
+        return JSONResponse({"error": "Invalid fallback preset"}, status_code=400)
 
-        preset = tier.get("preset", "")
-        if preset not in VALID_PRESETS:
-            return JSONResponse({"error": f"Tier {i+1}: invalid preset '{preset}'"}, status_code=400)
+    rules_data = {"rules": rules, "fallback_preset_id": fallback_id}
+    if save_auto_rules(rules_data):
+        return {"status": "ok", "rules": rules, "fallback_preset_id": fallback_id}
+    return JSONResponse({"error": "Failed to save rules"}, status_code=500)
 
-        crf = str(tier.get("crf", ""))
-        if crf and crf not in VALID_CRFS:
-            return JSONResponse({"error": f"Tier {i+1}: invalid CRF '{crf}'"}, status_code=400)
 
-    tiers.sort(key=lambda t: float(t.get("min_gb", 0)))
+@router.post("/presets/activate")
+def api_activate_preset(data: dict = Body(default={})):
+    """Set the active encoding preset. Also writes preset settings to DB for non-Auto presets."""
+    preset_id = data.get("preset_id")
+    if not preset_id:
+        return JSONResponse({"error": "preset_id is required"}, status_code=400)
 
-    for i in range(len(tiers) - 1):
-        curr_max = float(tiers[i].get("max_gb", 0))
-        next_min = float(tiers[i+1].get("min_gb", 0))
-        if curr_max == 0:
-            return JSONResponse({"error": f"Tier {i+1}: unlimited max_gb must be the last tier"}, status_code=400)
-        if curr_max > next_min:
-            return JSONResponse({"error": f"Tiers {i+1} and {i+2} overlap"}, status_code=400)
+    preset = get_encoding_preset(preset_id)
+    if not preset:
+        return JSONResponse({"error": "Preset not found"}, status_code=404)
 
-    try:
-        set_setting("COMPRESSION_TIERS", json.dumps(tiers))
-    except Exception as e:
-        return JSONResponse({"error": f"Failed to save: {e}"}, status_code=500)
+    set_setting("ACTIVE_PRESET_ID", str(preset_id))
 
-    return {"status": "ok", "tiers": tiers}
+    # For non-Auto presets, write their settings to individual DB settings
+    if not preset.get("auto_rules") and preset.get("settings"):
+        from transcodarr_core.config import DB_BACKED_SETTINGS
+        for key, val in preset["settings"].items():
+            if key in DB_BACKED_SETTINGS:
+                set_setting(key, val)
+
+    return {"status": "ok", "active_preset_id": preset_id, "preset_name": preset["name"]}
 
 
 # ── Encoding Presets ────────────────────────────────────────────────────────

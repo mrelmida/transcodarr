@@ -19,69 +19,26 @@ def format_progress_bar(percent, length=30):
 def bytes_to_gb(bytes_val: int | float) -> float:
     return float(bytes_val) / (1024 ** 3)
 
-def _resolve_compression_tier(file_path: str) -> tuple[str | None, str | None]:
-    """Check file size against compression tiers and return (preset, crf) override."""
-    enabled = get_setting("COMPRESSION_TIERS_ENABLED", "false")
-    if str(enabled).lower() != "true":
-        return (None, None)
+def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None,
+                     settings_override: dict | None = None) -> list[str]:
+    def _get(key, default):
+        if settings_override and key in settings_override:
+            return settings_override[key]
+        return get_setting(key, default)
 
-    tiers_json = get_setting("COMPRESSION_TIERS", "")
-    if not tiers_json:
-        return (None, None)
+    ffmpeg_threads = _get("FFMPEG_THREADS", "1")
+    x264_threads = _get("X264_THREADS", "4")
 
-    try:
-        tiers = json.loads(tiers_json)
-    except (json.JSONDecodeError, TypeError):
-        logging.warning("[TIERS] Invalid COMPRESSION_TIERS JSON, ignoring")
-        return (None, None)
-
-    if not tiers:
-        return (None, None)
-
-    try:
-        file_size_gb = bytes_to_gb(os.path.getsize(file_path))
-    except OSError:
-        return (None, None)
-
-    # Sort tiers by min_gb ascending
-    tiers.sort(key=lambda t: float(t.get("min_gb", 0)))
-
-    for tier in tiers:
-        min_gb = float(tier.get("min_gb", 0))
-        max_gb = float(tier.get("max_gb", 0))  # 0 means unlimited
-        if file_size_gb >= min_gb and (max_gb == 0 or file_size_gb < max_gb):
-            preset = tier.get("preset")
-            crf = tier.get("crf", "")
-            logging.info(
-                "[TIERS] File %.2f GB matched tier [%g-%s GB]: preset=%s crf=%s",
-                file_size_gb, min_gb, "unlimited" if max_gb == 0 else str(max_gb),
-                preset, crf or "default"
-            )
-            return (preset, crf)
-
-    return (None, None)
-
-def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None) -> list[str]:
-    ffmpeg_threads = get_setting("FFMPEG_THREADS", "1")
-    x264_threads = get_setting("X264_THREADS", "4")
-
-    # Read encoding settings from DB (falls back to env -> defaults)
-    resolution = get_setting("TARGET_RESOLUTION", "1920x1080")
-    preset = get_setting("TARGET_PRESET", "fast")
-    profile = get_setting("TARGET_PROFILE", "high")
-    audio_bitrate = get_setting("TARGET_AUDIO_BITRATE", "448k")
-    audio_channels = get_setting("TARGET_AUDIO_CHANNELS", "6")
-    crf = get_setting("TARGET_CRF", "")
-    normalize = get_setting("TARGET_AUDIO_NORMALIZE", "true")
-    video_mode = get_setting("VIDEO_STREAM_MODE", "encode")
-    audio_mode = get_setting("AUDIO_STREAM_MODE", "encode")
-
-    # Compression tier override (size-based preset/CRF)
-    tier_preset, tier_crf = _resolve_compression_tier(file_path)
-    if tier_preset is not None:
-        preset = tier_preset
-    if tier_crf is not None and tier_crf != "":
-        crf = tier_crf
+    # Read encoding settings (override -> DB -> env -> defaults)
+    resolution = _get("TARGET_RESOLUTION", "1920x1080")
+    preset = _get("TARGET_PRESET", "fast")
+    profile = _get("TARGET_PROFILE", "high")
+    audio_bitrate = _get("TARGET_AUDIO_BITRATE", "448k")
+    audio_channels = _get("TARGET_AUDIO_CHANNELS", "6")
+    crf = _get("TARGET_CRF", "")
+    normalize = _get("TARGET_AUDIO_NORMALIZE", "true")
+    video_mode = _get("VIDEO_STREAM_MODE", "encode")
+    audio_mode = _get("AUDIO_STREAM_MODE", "encode")
 
     # Sanitize the SRT for mov_text robustness (if provided)
     srt_safe = sanitize_for_movtext(srt_path) if srt_path else None
@@ -272,7 +229,7 @@ def _update_progress_file(progress_file: str, percent: float):
     with open(progress_file, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
-def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: Settings, progress_file: str | None = None, register_path: str = "") -> None:
+def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: Settings, progress_file: str | None = None, register_path: str = "", settings_override: dict | None = None) -> None:
     total_duration = get_duration_seconds(file_path) or 0.0
     total_size_gb = bytes_to_gb(os.path.getsize(file_path))
 
@@ -290,7 +247,7 @@ def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: 
     # 1) Combined encode (v+a+s)
     try:
         logging.info(f"[SUBS] Trying standard trancode with subs.")
-        cmd = build_ffmpeg_cmd(file_path, srt_path, out_path, s)
+        cmd = build_ffmpeg_cmd(file_path, srt_path, out_path, s, settings_override=settings_override)
         _log_progress(cmd)
         if not os.path.exists(out_path):
             raise RuntimeError(f"Expected output not found: {out_path}")
@@ -304,7 +261,7 @@ def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: 
 
     try:
         logging.info("[SUBS] Trying fallback: transcode without subs, then mux subs.")
-        cmd_no_subs = build_ffmpeg_cmd(file_path, None, tmp_no_subs, s)
+        cmd_no_subs = build_ffmpeg_cmd(file_path, None, tmp_no_subs, s, settings_override=settings_override)
         _log_progress(cmd_no_subs)
         if not os.path.exists(tmp_no_subs):
             raise RuntimeError(f"Fallback transcode produced no output: {tmp_no_subs}")
