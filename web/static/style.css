@@ -4,8 +4,9 @@
   --bg-hover:#1c2128;
   --text:#e6edf3;
   --text-muted:#7d8590;
-  --accent:#F97316;
-  --accent-2:#EF4444;
+  --accent:#58a6ff;
+  --accent-2:#8b5cf6;
+  --accent-brand:#F97316;
   --danger:#ef4444;
   --ok:#22c55e;
   --border:#30363d;
@@ -44,7 +45,7 @@ body.theme-dark{
   font-size:13px;transition:all 0.15s;
 }
 .nav-item:hover{color:var(--text);background:var(--bg-hover)}
-.nav-item.active{color:var(--text);background:var(--bg-hover);border-left-color:var(--accent)}
+.nav-item.active{color:var(--text);background:var(--bg-hover);border-left-color:var(--accent-brand)}
 .nav-ic{width:20px;text-align:center;font-size:15px}
 
 /* Settings parent nav item */
@@ -65,7 +66,7 @@ body.theme-dark{
   transition:all 0.15s;
 }
 .nav-subitem:hover{color:var(--text);background:rgba(255,255,255,0.03)}
-.nav-subitem.active{color:var(--accent);font-weight:500;border-left-color:var(--accent)}
+.nav-subitem.active{color:var(--accent-brand);font-weight:500;border-left-color:var(--accent-brand)}
 
 .sidebar-info{padding:10px 14px;border-top:1px solid var(--border);color:var(--text-muted);font-size:12px}
 
@@ -167,7 +168,7 @@ body.theme-dark{
   background:rgba(90,169,255,.15);border-color:var(--accent);color:var(--accent);
 }
 .worker-pill.off{opacity:0.5}
-.worker-icon{font-size:14px}
+.worker-icon{width:14px;height:14px;flex-shrink:0}
 
 /* Header button sizing */
 .btn-sm-header{padding:5px 10px;font-size:12px;border-radius:8px}
