@@ -312,7 +312,11 @@ def run_ffmpeg(file_path: str, srt_path: str, out_path: str, base_name: str, s: 
         logging.error(f"[FFMPEG] Fallback transcode (no subs) also failed: {e}")
         raise
 
-    # 3) Mux sanitized subs into that video
+    # 3) Mux sanitized subs into that video (skip if no subs provided)
+    if not srt_path:
+        os.replace(tmp_no_subs, out_path)
+        return
+
     try:
         logging.info("[SUBS] Muxing subs into fallback transcode output.")
         cmd = build_sub_copy_mux_cmd(tmp_no_subs, srt_path, tmp_with_subs)

@@ -196,6 +196,10 @@ SETTINGS_SCHEMA = {
                 {"value": "true", "label": "Enabled"},
                 {"value": "false", "label": "Disabled"},
             ]},
+            "REQUIRE_SUBTITLES": {"label": "Require Subtitles", "type": "select", "group": "audio", "options": [
+                {"value": "true", "label": "Required (skip if unavailable)"},
+                {"value": "false", "label": "Optional (transcode without if unavailable)"},
+            ]},
             "FFMPEG_THREADS": {"label": "FFmpeg Threads", "type": "select", "group": "advanced", "options": [
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},

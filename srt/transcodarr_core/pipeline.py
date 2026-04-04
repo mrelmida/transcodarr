@@ -603,13 +603,18 @@ def transcode_file(file_path: str, settings: Settings):
             meta_override=_meta_override,
         )
         if not chosen_srt:
-            if not is_reencode:
-                with contextlib.suppress(Exception):
-                    with open(sentinel_path, "w") as f:
-                        f.write("no aligned/sane subs available\n")
-                logging.warning(f"[SENTINEL] Created: {sentinel_path}")
-            logging.warning("[SUBPICK] No aligned/sane subtitles available — skipping this title for now.")
-            return
+            from .config import get_setting
+            require_subs = str(get_setting("REQUIRE_SUBTITLES", "true")).lower() == "true"
+            if require_subs:
+                if not is_reencode:
+                    with contextlib.suppress(Exception):
+                        with open(sentinel_path, "w") as f:
+                            f.write("no aligned/sane subs available\n")
+                    logging.warning(f"[SENTINEL] Created: {sentinel_path}")
+                logging.warning("[SUBPICK] No aligned/sane subtitles available — skipping this title for now.")
+                return
+            else:
+                logging.warning("[SUBPICK] No subtitles available — proceeding without subs (REQUIRE_SUBTITLES=false).")
 
         # ---------- NEW: ep-code sanity between src & chosen_srt ----------
         ep_sub = get_ep_code(chosen_srt)
@@ -635,7 +640,7 @@ def transcode_file(file_path: str, settings: Settings):
                    register_path=file_path if is_reencode else "")
 
         # ---------- verify tmp BEFORE promotion ----------
-        if not verify_output(ffmpeg_input, tmp_path, chosen_srt, require_subs=True):
+        if not verify_output(ffmpeg_input, tmp_path, chosen_srt, require_subs=bool(chosen_srt)):
             logging.warning("[FINALIZE] Verification failed; keeping source and leaving tmp for inspection.")
             return
 
