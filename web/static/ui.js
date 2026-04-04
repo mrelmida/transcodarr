@@ -643,6 +643,7 @@ let displayedMovies = [];
 let displayedTV     = [];
 let movieSelection = new Set();
 let tvSelection    = new Set();
+let lastCheckedIdx = { movie: null, tv: null };
 
 function showMediaModal(item, type) {
   const modal = $("#media-modal");
@@ -1039,14 +1040,31 @@ function renderMoviesTable(items) {
     });
   }
 
-  // Wire row checkboxes
+  // Wire row checkboxes (with shift-click range selection)
   body.querySelectorAll(".row-select").forEach(cb => {
-    cb.addEventListener("change", () => {
+    cb.addEventListener("click", (e) => {
       const idx = parseInt(cb.dataset.idx, 10);
       const item = displayedMovies[idx];
       if (!item) return;
-      if (cb.checked) movieSelection.add(item.path);
-      else movieSelection.delete(item.path);
+      if (e.shiftKey && lastCheckedIdx.movie !== null) {
+        const start = Math.min(lastCheckedIdx.movie, idx);
+        const end = Math.max(lastCheckedIdx.movie, idx);
+        for (let i = start; i <= end; i++) {
+          const it = displayedMovies[i];
+          if (!it) continue;
+          if (cb.checked) movieSelection.add(it.path);
+          else movieSelection.delete(it.path);
+        }
+        // Update all checkboxes in range without full re-render
+        body.querySelectorAll(".row-select").forEach(c => {
+          const ci = parseInt(c.dataset.idx, 10);
+          if (ci >= start && ci <= end) c.checked = cb.checked;
+        });
+      } else {
+        if (cb.checked) movieSelection.add(item.path);
+        else movieSelection.delete(item.path);
+      }
+      lastCheckedIdx.movie = idx;
       updateBulkActionBar("movie");
       updateSelectAllState("movie");
     });
@@ -1485,14 +1503,30 @@ function renderTVTable(items) {
     });
   }
 
-  // Wire row checkboxes
+  // Wire row checkboxes (with shift-click range selection)
   body.querySelectorAll(".row-select").forEach(cb => {
-    cb.addEventListener("change", () => {
+    cb.addEventListener("click", (e) => {
       const idx = parseInt(cb.dataset.idx, 10);
       const item = displayedTV[idx];
       if (!item) return;
-      if (cb.checked) tvSelection.add(item.path);
-      else tvSelection.delete(item.path);
+      if (e.shiftKey && lastCheckedIdx.tv !== null) {
+        const start = Math.min(lastCheckedIdx.tv, idx);
+        const end = Math.max(lastCheckedIdx.tv, idx);
+        for (let i = start; i <= end; i++) {
+          const it = displayedTV[i];
+          if (!it) continue;
+          if (cb.checked) tvSelection.add(it.path);
+          else tvSelection.delete(it.path);
+        }
+        body.querySelectorAll(".row-select").forEach(c => {
+          const ci = parseInt(c.dataset.idx, 10);
+          if (ci >= start && ci <= end) c.checked = cb.checked;
+        });
+      } else {
+        if (cb.checked) tvSelection.add(item.path);
+        else tvSelection.delete(item.path);
+      }
+      lastCheckedIdx.tv = idx;
       updateBulkActionBar("tv");
       updateSelectAllState("tv");
     });
