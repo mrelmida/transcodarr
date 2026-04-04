@@ -40,7 +40,7 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 - Real-time progress tracking with percentage and file size
 - Output verification (duration, streams, file size sanity checks)
 
-![Encoding Presets](screenshots/screenshot-8.PNG)
+![Encoding Preset Settings](screenshots/screenshot-8.PNG)
 
 **Subtitles**
 - Multi-provider fetching: OpenSubtitles.com, Podnapisi, Addic7ed
@@ -99,7 +99,7 @@ Open `http://localhost:5025` and configure through the Settings page:
 
 Click **Start** in the header to begin watching for files.
 
-![Encoding Settings](screenshots/screenshot-4.png)
+![Auto Preset Rules](screenshots/screenshot-4.png)
 
 ![Connections Settings](screenshots/screenshot-5.png)
 
