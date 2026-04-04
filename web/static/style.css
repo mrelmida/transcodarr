@@ -4,8 +4,8 @@
   --bg-hover:#1c2128;
   --text:#e6edf3;
   --text-muted:#7d8590;
-  --accent:#58a6ff;
-  --accent-2:#8b5cf6;
+  --accent:#F97316;
+  --accent-2:#EF4444;
   --danger:#ef4444;
   --ok:#22c55e;
   --border:#30363d;
@@ -36,15 +36,16 @@ body.theme-dark{
 .sidebar{
   background:var(--bg-card);border-right:1px solid var(--border);display:flex;flex-direction:column;justify-content:space-between;
 }
-.nav{display:flex;flex-direction:column;padding:10px}
+.nav{display:flex;flex-direction:column;padding:6px 0}
 .nav-item{
   display:flex;align-items:center;gap:10px;
-  background:transparent;border:1px solid transparent;color:var(--text);
-  padding:10px 12px;border-radius:10px;cursor:pointer;
+  background:transparent;border:none;border-left:3px solid transparent;
+  color:var(--text-muted);padding:8px 14px;cursor:pointer;
+  font-size:13px;transition:all 0.15s;
 }
-.nav-item:hover{background:var(--bg-hover)}
-.nav-item.active{background:var(--bg-hover);border-color:var(--border)}
-.nav-ic{width:20px;text-align:center}
+.nav-item:hover{color:var(--text);background:var(--bg-hover)}
+.nav-item.active{color:var(--text);background:var(--bg-hover);border-left-color:var(--accent)}
+.nav-ic{width:20px;text-align:center;font-size:15px}
 
 /* Settings parent nav item */
 .nav-item-parent{justify-content:flex-start}
@@ -54,21 +55,21 @@ body.theme-dark{
 /* Sidebar subnav */
 .nav-subnav{
   display:none;flex-direction:column;
-  padding:0 10px 6px 10px;
+  padding:0 0 4px 0;
 }
 .nav-subnav.expanded{display:flex}
 .nav-subitem{
-  padding:8px 12px 8px 32px;
-  background:none;border:none;text-align:left;
-  color:var(--text-muted);font-size:13px;cursor:pointer;
-  border-radius:8px;transition:all 0.15s;
+  padding:7px 14px 7px 34px;
+  background:none;border:none;border-left:3px solid transparent;text-align:left;
+  color:var(--text-muted);font-size:12px;cursor:pointer;
+  transition:all 0.15s;
 }
 .nav-subitem:hover{color:var(--text);background:rgba(255,255,255,0.03)}
-.nav-subitem.active{color:var(--accent);font-weight:500}
+.nav-subitem.active{color:var(--accent);font-weight:500;border-left-color:var(--accent)}
 
-.sidebar-info{padding:12px;border-top:1px solid var(--border);color:var(--text-muted);font-size:13px}
+.sidebar-info{padding:10px 14px;border-top:1px solid var(--border);color:var(--text-muted);font-size:12px}
 
-.content{padding:16px}
+.content{padding:16px;overflow:hidden}
 
 /* Controls & badges */
 .btn{
@@ -247,6 +248,10 @@ body.theme-dark{
 /* Views / panes */
 .view{display:none}
 .view.visible{display:block}
+#view-stats.visible{display:flex;flex-direction:column;height:calc(100vh - 56px - 32px)}
+#view-stats #storage-panel{flex:1;display:flex;flex-direction:column;margin-bottom:0}
+#view-stats .storage-chart-wrap{flex:1;overflow:hidden}
+#view-stats{overflow:hidden}
 .tabpane{display:none}
 .tabpane.visible{display:block}
 
@@ -596,7 +601,7 @@ th.sort-active{color:var(--accent)}
 }
 
 /* Storage panel */
-.storage-chart-wrap{height:240px;padding:16px;position:relative}
+.storage-chart-wrap{min-height:240px;padding:16px;position:relative}
 
 /* Clickable stat cards */
 .stat-card{cursor:pointer;transition:border-color 0.15s}

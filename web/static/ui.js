@@ -3014,7 +3014,8 @@ async function loadTV(forceRefresh = false){
       return;
     }
 
-    const W = 900, H = 200, PAD_L = 50, PAD_R = 10, PAD_T = 10, PAD_B = 28;
+    const rect = container.getBoundingClientRect();
+    const W = Math.round(rect.width) || 900, H = Math.round(rect.height) || 200, PAD_L = 50, PAD_R = 10, PAD_T = 10, PAD_B = 28;
     const plotW = W - PAD_L - PAD_R;
     const plotH = H - PAD_T - PAD_B;
 
@@ -3051,7 +3052,7 @@ async function loadTV(forceRefresh = false){
     }
 
     container.innerHTML = `
-      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block">
         ${gridLines}
         <polygon points="${areaPoints}" fill="var(--ok)" class="chart-area"/>
         <polyline points="${points}" stroke="var(--ok)" class="chart-line"/>
@@ -3294,6 +3295,13 @@ async function loadTV(forceRefresh = false){
   if (storageRange) {
     storageRange.addEventListener("change", () => renderStorageChart());
   }
+
+  // Redraw storage chart on resize
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => renderStorageChart(), 150);
+  });
 
   // Clickable stat cards → chart modal
   const statCards = $$(".stat-card");

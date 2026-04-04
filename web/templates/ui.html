@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Transcodarr</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="/static/style.css?v=31" />
+  <link rel="stylesheet" href="/static/style.css?v=36" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2" />
 </head>
 <body class="theme-dark">
@@ -41,16 +41,16 @@
     <aside class="sidebar">
       <nav class="nav">
         <button class="nav-item active" data-view="media">
-          <span class="nav-ic">🎞️</span> Media
+          <span class="nav-ic">&#9654;</span> Media
         </button>
         <button class="nav-item" data-view="logs">
-          <span class="nav-ic">📜</span> Logs
+          <span class="nav-ic">&#9776;</span> Logs
         </button>
         <button class="nav-item" data-view="stats">
-          <span class="nav-ic">📊</span> System
+          <span class="nav-ic">&#9673;</span> System
         </button>
         <button class="nav-item nav-item-parent" data-view="settings">
-          <span class="nav-ic">⚙️</span> Settings
+          <span class="nav-ic">&#9881;</span> Settings
           <span class="nav-arrow">▾</span>
         </button>
         <div id="settings-subnav" class="nav-subnav">
@@ -198,9 +198,9 @@
             <div class="panel-actions">
               <select class="filter-status" id="storage-range">
                 <option value="7d">Last 7 days</option>
-                <option value="30d" selected>Last 30 days</option>
+                <option value="30d">Last 30 days</option>
                 <option value="90d">Last 90 days</option>
-                <option value="all">All time</option>
+                <option value="all" selected>All time</option>
               </select>
             </div>
           </div>
@@ -285,6 +285,6 @@
     window.API_BASE = "{{ api_base | default('/api') }}";
     window.UI_BOOT  = {{ (ui_boot or {}) | tojson }};
   </script>
-  <script src="/static/ui.js?v=41"></script>
+  <script src="/static/ui.js?v=43"></script>
 </body>
 </html>
