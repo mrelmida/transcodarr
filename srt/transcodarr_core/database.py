@@ -9,9 +9,10 @@ import time
 from typing import Optional, Dict, List
 from contextlib import contextmanager
 
+import json
 import psycopg2
 from psycopg2 import pool
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 
 from .config import Settings
 
@@ -234,6 +235,28 @@ def _run_migrations(conn):
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_storage_history_time ON storage_history(recorded_at)")
         logging.info("[DATABASE] Migration: storage_history table created")
+
+    # Migration: Add encoding_presets table if it doesn't exist
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_name = 'encoding_presets'
+        )
+    """)
+    if not cursor.fetchone()[0]:
+        logging.info("[DATABASE] Migration: Creating encoding_presets table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS encoding_presets (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                is_default BOOLEAN DEFAULT FALSE,
+                settings JSONB NOT NULL,
+                created_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+                updated_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+            )
+        """)
+        logging.info("[DATABASE] Migration: encoding_presets table created")
+        _seed_default_presets(cursor)
 
     cursor.close()
     conn.commit()
@@ -861,3 +884,111 @@ def prune_storage_history(keep_days: int = 90) -> int:
     with get_cursor() as cursor:
         cursor.execute("DELETE FROM storage_history WHERE recorded_at < %s", (cutoff,))
         return cursor.rowcount
+
+
+# ============================================================
+# Encoding Presets
+# ============================================================
+
+_BASE_PRESET_SETTINGS = {
+    "VIDEO_STREAM_MODE": "encode",
+    "AUDIO_STREAM_MODE": "encode",
+    "TARGET_VIDEO_CODEC": "h264",
+    "TARGET_AUDIO_CODEC": "aac",
+    "TARGET_CONTAINER": ".mp4",
+    "TARGET_RESOLUTION": "1920x1080",
+    "TARGET_PRESET": "fast",
+    "TARGET_PROFILE": "high",
+    "TARGET_AUDIO_BITRATE": "448k",
+    "TARGET_AUDIO_CHANNELS": "6",
+    "TARGET_CRF": "",
+    "TARGET_AUDIO_NORMALIZE": "true",
+    "FFMPEG_THREADS": "1",
+    "X264_THREADS": "4",
+    "COMPRESSION_TIERS_ENABLED": "false",
+}
+
+DEFAULT_PRESETS = [
+    {"name": "Full Transcode", "settings": {**_BASE_PRESET_SETTINGS}},
+    {"name": "Audio Only", "settings": {**_BASE_PRESET_SETTINGS, "VIDEO_STREAM_MODE": "copy"}},
+    {"name": "Remux + Subs", "settings": {**_BASE_PRESET_SETTINGS, "VIDEO_STREAM_MODE": "copy", "AUDIO_STREAM_MODE": "copy"}},
+    {"name": "4K Downscale", "settings": {**_BASE_PRESET_SETTINGS, "TARGET_RESOLUTION": "1080p_max"}},
+    {"name": "High Quality", "settings": {**_BASE_PRESET_SETTINGS, "TARGET_PRESET": "slow", "TARGET_CRF": "19"}},
+]
+
+
+def _seed_default_presets(cursor):
+    """Insert default presets if table is empty."""
+    cursor.execute("SELECT COUNT(*) FROM encoding_presets")
+    if cursor.fetchone()[0] > 0:
+        return
+    for p in DEFAULT_PRESETS:
+        cursor.execute(
+            "INSERT INTO encoding_presets (name, is_default, settings) VALUES (%s, TRUE, %s)",
+            (p["name"], Json(p["settings"])),
+        )
+    logging.info("[DATABASE] Seeded %d default encoding presets", len(DEFAULT_PRESETS))
+
+
+def get_encoding_presets() -> List[Dict]:
+    """Get all encoding presets, defaults first then by name."""
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT id, name, is_default, settings, created_at, updated_at "
+            "FROM encoding_presets ORDER BY is_default DESC, name ASC"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def create_encoding_preset(name: str, settings: dict) -> Optional[Dict]:
+    """Create a custom encoding preset. Returns the new row or None on duplicate."""
+    try:
+        with get_cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO encoding_presets (name, is_default, settings) "
+                "VALUES (%s, FALSE, %s) RETURNING id, name, is_default, settings, created_at, updated_at",
+                (name, Json(settings)),
+            )
+            return dict(cursor.fetchone())
+    except psycopg2.IntegrityError:
+        return None
+
+
+def update_encoding_preset(preset_id: int, name: str, settings: dict) -> Optional[Dict]:
+    """Update a custom preset. Returns None if not found or is a default."""
+    with get_cursor() as cursor:
+        cursor.execute(
+            "UPDATE encoding_presets SET name = %s, settings = %s, updated_at = %s "
+            "WHERE id = %s AND is_default = FALSE "
+            "RETURNING id, name, is_default, settings, created_at, updated_at",
+            (name, Json(settings), time.time(), preset_id),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def delete_encoding_preset(preset_id: int) -> bool:
+    """Delete a custom preset. Returns False if not found or is a default."""
+    with get_cursor() as cursor:
+        cursor.execute(
+            "DELETE FROM encoding_presets WHERE id = %s AND is_default = FALSE",
+            (preset_id,),
+        )
+        return cursor.rowcount > 0
+
+
+def restore_default_presets() -> int:
+    """Re-insert any missing default presets. Returns count inserted."""
+    count = 0
+    with get_cursor() as cursor:
+        for p in DEFAULT_PRESETS:
+            cursor.execute("SELECT id FROM encoding_presets WHERE name = %s", (p["name"],))
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT INTO encoding_presets (name, is_default, settings) VALUES (%s, TRUE, %s)",
+                    (p["name"], Json(p["settings"])),
+                )
+                count += 1
+    if count:
+        logging.info("[DATABASE] Restored %d default encoding presets", count)
+    return count

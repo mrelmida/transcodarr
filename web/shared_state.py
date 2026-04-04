@@ -121,25 +121,33 @@ SETTINGS_SCHEMA = {
     "encoding": {
         "label": "Encoding",
         "fields": {
-            "TARGET_VIDEO_CODEC": {"label": "Video Codec", "type": "select", "options": [
+            "VIDEO_STREAM_MODE": {"label": "Video Stream", "type": "select", "group": "video", "options": [
+                {"value": "encode", "label": "Encode (transcode)"},
+                {"value": "copy", "label": "Copy (passthrough)"},
+            ]},
+            "AUDIO_STREAM_MODE": {"label": "Audio Stream", "type": "select", "group": "audio", "options": [
+                {"value": "encode", "label": "Encode (transcode)"},
+                {"value": "copy", "label": "Copy (passthrough)"},
+            ]},
+            "TARGET_VIDEO_CODEC": {"label": "Video Codec", "type": "select", "group": "video", "options": [
                 {"value": "h264", "label": "H.264 (x264)"},
                 {"value": "h265", "label": "H.265 (x265)"},
                 {"value": "vp9", "label": "VP9"},
                 {"value": "av1", "label": "AV1"},
             ]},
-            "TARGET_AUDIO_CODEC": {"label": "Audio Codec", "type": "select", "options": [
+            "TARGET_AUDIO_CODEC": {"label": "Audio Codec", "type": "select", "group": "audio", "options": [
                 {"value": "aac", "label": "AAC"},
                 {"value": "ac3", "label": "AC3 (Dolby Digital)"},
                 {"value": "eac3", "label": "EAC3 (Dolby Digital Plus)"},
                 {"value": "flac", "label": "FLAC"},
                 {"value": "opus", "label": "Opus"},
             ]},
-            "TARGET_CONTAINER": {"label": "Container", "type": "select", "options": [
+            "TARGET_CONTAINER": {"label": "Container", "type": "select", "group": "video", "options": [
                 {"value": ".mp4", "label": "MP4 (.mp4)"},
                 {"value": ".mkv", "label": "Matroska (.mkv)"},
                 {"value": ".webm", "label": "WebM (.webm)"},
             ]},
-            "TARGET_RESOLUTION": {"label": "Resolution", "type": "select", "options": [
+            "TARGET_RESOLUTION": {"label": "Resolution", "type": "select", "group": "video", "options": [
                 {"value": "source", "label": "Match Source"},
                 {"value": "1280x720", "label": "720p (1280x720)"},
                 {"value": "1920x1080", "label": "1080p (1920x1080)"},
@@ -147,7 +155,7 @@ SETTINGS_SCHEMA = {
                 {"value": "2560x1440", "label": "1440p (2560x1440)"},
                 {"value": "3840x2160", "label": "4K (3840x2160)"},
             ]},
-            "TARGET_PRESET": {"label": "Preset", "type": "select", "options": [
+            "TARGET_PRESET": {"label": "Preset", "type": "select", "group": "video", "options": [
                 {"value": "ultrafast", "label": "Ultrafast"},
                 {"value": "superfast", "label": "Superfast"},
                 {"value": "veryfast", "label": "Veryfast"},
@@ -158,24 +166,24 @@ SETTINGS_SCHEMA = {
                 {"value": "slower", "label": "Slower"},
                 {"value": "veryslow", "label": "Veryslow"},
             ]},
-            "TARGET_PROFILE": {"label": "Profile", "type": "select", "options": [
+            "TARGET_PROFILE": {"label": "Profile", "type": "select", "group": "video", "options": [
                 {"value": "baseline", "label": "Baseline"},
                 {"value": "main", "label": "Main"},
                 {"value": "high", "label": "High"},
             ]},
-            "TARGET_AUDIO_BITRATE": {"label": "Audio Bitrate", "type": "select", "options": [
+            "TARGET_AUDIO_BITRATE": {"label": "Audio Bitrate", "type": "select", "group": "audio", "options": [
                 {"value": "128k", "label": "128k"},
                 {"value": "192k", "label": "192k"},
                 {"value": "256k", "label": "256k"},
                 {"value": "320k", "label": "320k"},
                 {"value": "448k", "label": "448k"},
             ]},
-            "TARGET_AUDIO_CHANNELS": {"label": "Audio Channels", "type": "select", "options": [
+            "TARGET_AUDIO_CHANNELS": {"label": "Audio Channels", "type": "select", "group": "audio", "options": [
                 {"value": "2", "label": "2 (Stereo)"},
                 {"value": "6", "label": "6 (5.1)"},
                 {"value": "8", "label": "8 (7.1)"},
             ]},
-            "TARGET_CRF": {"label": "CRF", "type": "select", "options": [
+            "TARGET_CRF": {"label": "CRF", "type": "select", "group": "video", "options": [
                 {"value": "", "label": "Default (codec decides)"},
                 {"value": "18", "label": "18 (Visually Lossless)"},
                 {"value": "20", "label": "20"},
@@ -184,25 +192,25 @@ SETTINGS_SCHEMA = {
                 {"value": "28", "label": "28"},
                 {"value": "30", "label": "30"},
             ]},
-            "TARGET_AUDIO_NORMALIZE": {"label": "Audio Normalization", "type": "select", "options": [
+            "TARGET_AUDIO_NORMALIZE": {"label": "Audio Normalization", "type": "select", "group": "audio", "options": [
                 {"value": "true", "label": "Enabled"},
                 {"value": "false", "label": "Disabled"},
             ]},
-            "FFMPEG_THREADS": {"label": "FFmpeg Threads", "type": "select", "options": [
+            "FFMPEG_THREADS": {"label": "FFmpeg Threads", "type": "select", "group": "advanced", "options": [
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},
                 {"value": "4", "label": "4"},
                 {"value": "8", "label": "8"},
                 {"value": "0", "label": "Auto (all cores)"},
             ]},
-            "X264_THREADS": {"label": "x264 Threads", "type": "select", "options": [
+            "X264_THREADS": {"label": "x264 Threads", "type": "select", "group": "advanced", "options": [
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},
                 {"value": "4", "label": "4"},
                 {"value": "8", "label": "8"},
                 {"value": "0", "label": "Auto (all cores)"},
             ]},
-            "COMPRESSION_TIERS_ENABLED": {"label": "Compression Tiers", "type": "select", "options": [
+            "COMPRESSION_TIERS_ENABLED": {"label": "Compression Tiers", "type": "select", "group": "advanced", "options": [
                 {"value": "false", "label": "Disabled"},
                 {"value": "true", "label": "Enabled"},
             ]},

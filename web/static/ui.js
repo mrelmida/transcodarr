@@ -1644,6 +1644,8 @@ async function loadTV(forceRefresh = false){
   let settingsOriginal = {};
   let settingsModified = {};
   let currentSection = null;
+  let encodingPresets = [];
+  let activePresetId = null;
 
   async function loadSettings() {
     const container = $("#settings-container");
@@ -1662,6 +1664,7 @@ async function loadTV(forceRefresh = false){
       settingsSchema = data.schema;
       settingsOriginal = {...data.values};
       settingsModified = {...data.values};
+      encodingPresets = data.encoding_presets || [];
 
       renderSettingsNav();
       // Show first section by default
@@ -1723,77 +1726,320 @@ async function loadTV(forceRefresh = false){
       return;
     }
 
+    // Special handling for encoding section — presets + two-column layout
+    if (sectionKey === "encoding") {
+      renderEncodingSection(container, section);
+      return;
+    }
+
+    renderGenericFields(container, section);
+  }
+
+  function renderGenericFields(container, section) {
     const fieldsDiv = document.createElement("div");
     fieldsDiv.className = "settings-fields";
 
     for (const [fieldKey, field] of Object.entries(section.fields)) {
-      const value = settingsModified[fieldKey] || "";
-      const isModified = settingsModified[fieldKey] !== settingsOriginal[fieldKey];
-      const isPassword = field.type === "password";
-      const isSelect = field.type === "select";
-
-      const fieldEl = document.createElement("div");
-      fieldEl.className = `setting-field${isModified ? " modified" : ""}`;
-      fieldEl.dataset.key = fieldKey;
-
-      if (isSelect) {
-        const optionsHtml = (field.options || []).map(opt =>
-          `<option value="${escapeHtml(opt.value)}"${opt.value === value ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
-        ).join("");
-
-        fieldEl.innerHTML = `
-          <label for="set-${fieldKey}">${field.label}</label>
-          <div class="input-wrap">
-            <select id="set-${fieldKey}" data-key="${fieldKey}">${optionsHtml}</select>
-          </div>
-        `;
-        fieldsDiv.appendChild(fieldEl);
-
-        const select = fieldEl.querySelector("select");
-        select.addEventListener("change", (e) => {
-          settingsModified[fieldKey] = e.target.value;
-          updateSettingsUI();
-        });
-      } else {
-        fieldEl.innerHTML = `
-          <label for="set-${fieldKey}">${field.label}</label>
-          <div class="input-wrap">
-            <input type="${isPassword ? "password" : "text"}"
-                   id="set-${fieldKey}"
-                   data-key="${fieldKey}"
-                   placeholder="${field.placeholder || ""}"
-                   value="${escapeHtml(value)}"
-                   autocomplete="off"
-                   ${field.readonly ? "disabled" : ""}>
-            ${isPassword ? `<button type="button" class="btn-reveal" data-for="set-${fieldKey}">Show</button>` : ""}
-          </div>
-        `;
-        fieldsDiv.appendChild(fieldEl);
-
-        // Add change listener
-        const input = fieldEl.querySelector("input");
-        input.addEventListener("input", (e) => {
-          settingsModified[fieldKey] = e.target.value;
-          updateSettingsUI();
-        });
-
-        // Add reveal button listener
-        if (isPassword) {
-          const revealBtn = fieldEl.querySelector(".btn-reveal");
-          revealBtn.addEventListener("click", () => {
-            const isHidden = input.type === "password";
-            input.type = isHidden ? "text" : "password";
-            revealBtn.textContent = isHidden ? "Hide" : "Show";
-          });
-        }
-      }
+      renderSettingField(fieldsDiv, fieldKey, field);
     }
 
     container.appendChild(fieldsDiv);
+  }
 
-    // Append compression tiers panel for encoding section
-    if (sectionKey === "encoding") {
-      renderCompressionTiersPanel(container);
+  function renderSettingField(parent, fieldKey, field) {
+    const value = settingsModified[fieldKey] || "";
+    const isModified = settingsModified[fieldKey] !== settingsOriginal[fieldKey];
+    const isPassword = field.type === "password";
+    const isSelect = field.type === "select";
+
+    const fieldEl = document.createElement("div");
+    fieldEl.className = `setting-field${isModified ? " modified" : ""}`;
+    fieldEl.dataset.key = fieldKey;
+
+    if (isSelect) {
+      const optionsHtml = (field.options || []).map(opt =>
+        `<option value="${escapeHtml(opt.value)}"${opt.value === value ? " selected" : ""}>${escapeHtml(opt.label)}</option>`
+      ).join("");
+
+      fieldEl.innerHTML = `
+        <label for="set-${fieldKey}">${field.label}</label>
+        <div class="input-wrap">
+          <select id="set-${fieldKey}" data-key="${fieldKey}">${optionsHtml}</select>
+        </div>
+      `;
+      parent.appendChild(fieldEl);
+
+      const select = fieldEl.querySelector("select");
+      select.addEventListener("change", (e) => {
+        settingsModified[fieldKey] = e.target.value;
+        updateSettingsUI();
+      });
+    } else {
+      fieldEl.innerHTML = `
+        <label for="set-${fieldKey}">${field.label}</label>
+        <div class="input-wrap">
+          <input type="${isPassword ? "password" : "text"}"
+                 id="set-${fieldKey}"
+                 data-key="${fieldKey}"
+                 placeholder="${field.placeholder || ""}"
+                 value="${escapeHtml(value)}"
+                 autocomplete="off"
+                 ${field.readonly ? "disabled" : ""}>
+          ${isPassword ? `<button type="button" class="btn-reveal" data-for="set-${fieldKey}">Show</button>` : ""}
+        </div>
+      `;
+      parent.appendChild(fieldEl);
+
+      const input = fieldEl.querySelector("input");
+      input.addEventListener("input", (e) => {
+        settingsModified[fieldKey] = e.target.value;
+        updateSettingsUI();
+      });
+
+      if (isPassword) {
+        const revealBtn = fieldEl.querySelector(".btn-reveal");
+        revealBtn.addEventListener("click", () => {
+          const isHidden = input.type === "password";
+          input.type = isHidden ? "text" : "password";
+          revealBtn.textContent = isHidden ? "Hide" : "Show";
+        });
+      }
+    }
+  }
+
+  // ----- Encoding Section with Presets -----
+
+  function renderEncodingSection(container, section) {
+    // 1. Preset strip
+    const strip = document.createElement("div");
+    strip.className = "preset-strip";
+    strip.innerHTML = `
+      <div class="preset-strip-header">
+        <h3>Presets</h3>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost" id="btn-restore-presets" style="font-size:12px">Restore Defaults</button>
+          <button type="button" class="btn btn-ghost" id="btn-new-preset">+ New Preset</button>
+        </div>
+      </div>
+      <div class="preset-cards" id="preset-cards"></div>
+      <div class="new-preset-form" id="new-preset-form" style="display:none">
+        <input type="text" class="new-preset-input" id="new-preset-name" placeholder="Preset name..." maxlength="40">
+        <button type="button" class="btn btn-primary" id="btn-save-preset">Save</button>
+        <button type="button" class="btn btn-ghost" id="btn-cancel-preset">Cancel</button>
+      </div>
+    `;
+    container.appendChild(strip);
+
+    renderPresetCards();
+    detectActivePreset();
+
+    // Wire preset form
+    $("#btn-new-preset").addEventListener("click", () => {
+      $("#new-preset-form").style.display = "flex";
+      $("#new-preset-name").focus();
+    });
+    $("#btn-cancel-preset").addEventListener("click", () => {
+      $("#new-preset-form").style.display = "none";
+      $("#new-preset-name").value = "";
+    });
+    $("#btn-save-preset").addEventListener("click", () => createPreset());
+    $("#new-preset-name").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") createPreset();
+    });
+    $("#btn-restore-presets").addEventListener("click", () => restoreDefaultPresets());
+
+    // 2. Two-column field groups
+    const groups = {video: [], audio: [], advanced: []};
+    for (const [fieldKey, field] of Object.entries(section.fields)) {
+      const group = field.group || "advanced";
+      if (groups[group]) groups[group].push([fieldKey, field]);
+    }
+
+    const columns = document.createElement("div");
+    columns.className = "encoding-columns";
+
+    // Video group
+    const videoGroup = document.createElement("div");
+    videoGroup.className = "encoding-group";
+    videoGroup.innerHTML = `<div class="encoding-group-title">Video</div>`;
+    const videoFields = document.createElement("div");
+    videoFields.className = "settings-fields";
+    for (const [key, field] of groups.video) renderSettingField(videoFields, key, field);
+    videoGroup.appendChild(videoFields);
+    columns.appendChild(videoGroup);
+
+    // Audio group
+    const audioGroup = document.createElement("div");
+    audioGroup.className = "encoding-group";
+    audioGroup.innerHTML = `<div class="encoding-group-title">Audio</div>`;
+    const audioFields = document.createElement("div");
+    audioFields.className = "settings-fields";
+    for (const [key, field] of groups.audio) renderSettingField(audioFields, key, field);
+    audioGroup.appendChild(audioFields);
+    columns.appendChild(audioGroup);
+
+    // Advanced group (full width)
+    if (groups.advanced.length > 0) {
+      const advGroup = document.createElement("div");
+      advGroup.className = "encoding-group encoding-advanced";
+      advGroup.innerHTML = `<div class="encoding-group-title">Advanced</div>`;
+      const advFields = document.createElement("div");
+      advFields.className = "settings-fields";
+      for (const [key, field] of groups.advanced) renderSettingField(advFields, key, field);
+      advGroup.appendChild(advFields);
+      columns.appendChild(advGroup);
+    }
+
+    container.appendChild(columns);
+
+    // 3. Compression tiers
+    renderCompressionTiersPanel(container);
+  }
+
+  function renderPresetCards() {
+    const cardsDiv = $("#preset-cards");
+    if (!cardsDiv) return;
+    cardsDiv.innerHTML = "";
+
+    for (const preset of encodingPresets) {
+      const card = document.createElement("div");
+      card.className = `preset-card${preset.id === activePresetId ? " active" : ""}`;
+      card.dataset.presetId = preset.id;
+
+      let html = `
+        <div class="preset-card-name">${escapeHtml(preset.name)}</div>
+        <div class="preset-card-badge">${preset.is_default ? "Built-in" : "Custom"}</div>
+      `;
+      if (preset.id === activePresetId) {
+        html += `<div class="preset-card-active">● Active</div>`;
+      }
+      if (!preset.is_default) {
+        html += `<button type="button" class="preset-card-delete" title="Delete preset">&times;</button>`;
+      }
+      card.innerHTML = html;
+
+      card.addEventListener("click", (e) => {
+        if (e.target.classList.contains("preset-card-delete")) return;
+        applyPreset(preset);
+      });
+
+      const delBtn = card.querySelector(".preset-card-delete");
+      if (delBtn) {
+        delBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          deletePreset(preset.id, preset.name);
+        });
+      }
+
+      cardsDiv.appendChild(card);
+    }
+  }
+
+  function detectActivePreset() {
+    activePresetId = null;
+    const encodingFields = settingsSchema.encoding ? Object.keys(settingsSchema.encoding.fields) : [];
+
+    for (const preset of encodingPresets) {
+      const settings = preset.settings || {};
+      let matches = true;
+      for (const key of encodingFields) {
+        if (key in settings) {
+          const current = settingsModified[key] || "";
+          const presetVal = settings[key] || "";
+          if (current !== presetVal) { matches = false; break; }
+        }
+      }
+      if (matches) { activePresetId = preset.id; break; }
+    }
+
+    // Update card active states
+    $$(".preset-card").forEach(card => {
+      const id = parseInt(card.dataset.presetId);
+      const isActive = id === activePresetId;
+      card.classList.toggle("active", isActive);
+      const dot = card.querySelector(".preset-card-active");
+      if (isActive && !dot) {
+        const d = document.createElement("div");
+        d.className = "preset-card-active";
+        d.textContent = "● Active";
+        card.appendChild(d);
+      } else if (!isActive && dot) {
+        dot.remove();
+      }
+    });
+  }
+
+  function applyPreset(preset) {
+    const settings = preset.settings || {};
+    for (const [key, val] of Object.entries(settings)) {
+      settingsModified[key] = val;
+      const el = document.querySelector(`#set-${key}`);
+      if (el) el.value = val;
+    }
+    updateSettingsUI();
+  }
+
+  async function createPreset() {
+    const nameInput = $("#new-preset-name");
+    const name = nameInput.value.trim();
+    if (!name) return;
+
+    // Collect current encoding values
+    const encodingFields = settingsSchema.encoding ? Object.keys(settingsSchema.encoding.fields) : [];
+    const settings = {};
+    for (const key of encodingFields) {
+      settings[key] = settingsModified[key] || "";
+    }
+
+    try {
+      const r = await fetch(`${API}/encoding-presets`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, settings}),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        alert(data.error || "Failed to create preset");
+        return;
+      }
+      encodingPresets.push(data.preset);
+      renderPresetCards();
+      detectActivePreset();
+      $("#new-preset-form").style.display = "none";
+      nameInput.value = "";
+    } catch (e) {
+      alert("Failed to create preset: " + e.message);
+    }
+  }
+
+  async function deletePreset(id, name) {
+    if (!confirm(`Delete preset "${name}"?`)) return;
+    try {
+      const r = await fetch(`${API}/encoding-presets/${id}`, {method: "DELETE"});
+      if (r.ok) {
+        encodingPresets = encodingPresets.filter(p => p.id !== id);
+        renderPresetCards();
+        detectActivePreset();
+      }
+    } catch (e) {
+      alert("Failed to delete preset: " + e.message);
+    }
+  }
+
+  async function restoreDefaultPresets() {
+    try {
+      const r = await fetch(`${API}/encoding-presets/restore`, {method: "POST"});
+      const data = await r.json();
+      if (r.ok) {
+        // Refresh full preset list
+        const pr = await fetch(`${API}/encoding-presets`);
+        const pd = await pr.json();
+        encodingPresets = pd.presets || [];
+        renderPresetCards();
+        detectActivePreset();
+      }
+    } catch (e) {
+      alert("Failed to restore presets: " + e.message);
     }
   }
 
@@ -2348,6 +2594,9 @@ async function loadTV(forceRefresh = false){
     } else {
       status.textContent = "";
     }
+
+    // Update active preset indicator
+    if (currentSection === "encoding") detectActivePreset();
   }
 
   async function saveSettings() {

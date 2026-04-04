@@ -73,6 +73,8 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     audio_channels = get_setting("TARGET_AUDIO_CHANNELS", "6")
     crf = get_setting("TARGET_CRF", "")
     normalize = get_setting("TARGET_AUDIO_NORMALIZE", "true")
+    video_mode = get_setting("VIDEO_STREAM_MODE", "encode")
+    audio_mode = get_setting("AUDIO_STREAM_MODE", "encode")
 
     # Compression tier override (size-based preset/CRF)
     tier_preset, tier_crf = _resolve_compression_tier(file_path)
@@ -97,62 +99,67 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     ]
     if srt_safe:
         cmd += ["-map", "1:0"]
-    cmd += [
-        "-c:v", "libx264",
-        "-x264-params", f"threads={x264_threads}",
-    ]
-
-    # Probe source for HDR metadata and dimensions (single ffprobe call)
-    hdr_info = detect_hdr(file_path)
-
-    # Build composable video filter chain
-    vf_filters: list[str] = []
-
-    # 1. HDR → SDR tone mapping (must come before scaling)
-    if hdr_info["is_hdr"]:
-        logging.info("[HDR] Applying tone mapping for %s", os.path.basename(file_path))
-        vf_filters += [
-            "zscale=t=linear:npl=100",
-            "format=gbrpf32le",
-            "zscale=p=bt709",
-            "tonemap=hable:desat=0",
-            "zscale=t=bt709:m=bt709:r=tv",
-            "format=yuv420p",
+    if video_mode == "copy":
+        cmd += ["-c:v", "copy"]
+    else:
+        cmd += [
+            "-c:v", "libx264",
+            "-x264-params", f"threads={x264_threads}",
         ]
 
-    # 2. Resolution scaling (aspect-ratio-preserving)
-    if resolution and resolution.lower() == "1080p_max":
-        src_h = hdr_info["height"]
-        if src_h > 1080 or src_h == 0:
-            # src_h == 0 means probe failed; assume downscale needed
-            vf_filters.append("scale=-2:1080")
-    elif resolution and resolution.lower() != "source":
-        w, h = resolution.split("x")
-        vf_filters.append(f"scale={w}:{h}")
+        # Probe source for HDR metadata and dimensions (single ffprobe call)
+        hdr_info = detect_hdr(file_path)
 
-    if vf_filters:
-        cmd += ["-vf", ",".join(vf_filters)]
+        # Build composable video filter chain
+        vf_filters: list[str] = []
 
-    # Pixel format: HDR chain already includes format=yuv420p
-    if not hdr_info["is_hdr"]:
-        cmd += ["-pix_fmt", "yuv420p"]
+        # 1. HDR → SDR tone mapping (must come before scaling)
+        if hdr_info["is_hdr"]:
+            logging.info("[HDR] Applying tone mapping for %s", os.path.basename(file_path))
+            vf_filters += [
+                "zscale=t=linear:npl=100",
+                "format=gbrpf32le",
+                "zscale=p=bt709",
+                "tonemap=hable:desat=0",
+                "zscale=t=bt709:m=bt709:r=tv",
+                "format=yuv420p",
+            ]
 
-    cmd += [
-        "-profile:v", profile,
-        "-preset", preset,
-    ]
+        # 2. Resolution scaling (aspect-ratio-preserving)
+        if resolution and resolution.lower() == "1080p_max":
+            src_h = hdr_info["height"]
+            if src_h > 1080 or src_h == 0:
+                # src_h == 0 means probe failed; assume downscale needed
+                vf_filters.append("scale=-2:1080")
+        elif resolution and resolution.lower() != "source":
+            w, h = resolution.split("x")
+            vf_filters.append(f"scale={w}:{h}")
 
-    # CRF: empty = let codec decide, otherwise set explicitly
-    if crf:
-        cmd += ["-crf", crf]
+        if vf_filters:
+            cmd += ["-vf", ",".join(vf_filters)]
 
-    # Audio normalization
-    if normalize.lower() != "false":
-        cmd += ["-af", "loudnorm=I=-14:TP=-1:LRA=11"]
+        # Pixel format: HDR chain already includes format=yuv420p
+        if not hdr_info["is_hdr"]:
+            cmd += ["-pix_fmt", "yuv420p"]
 
-    cmd += [
-        "-c:a", "aac", "-b:a", audio_bitrate, "-ac", audio_channels,
-    ]
+        cmd += [
+            "-profile:v", profile,
+            "-preset", preset,
+        ]
+
+        # CRF: empty = let codec decide, otherwise set explicitly
+        if crf:
+            cmd += ["-crf", crf]
+
+    if audio_mode == "copy":
+        cmd += ["-c:a", "copy"]
+    else:
+        # Audio normalization
+        if normalize.lower() != "false":
+            cmd += ["-af", "loudnorm=I=-14:TP=-1:LRA=11"]
+        cmd += [
+            "-c:a", "aac", "-b:a", audio_bitrate, "-ac", audio_channels,
+        ]
     if srt_safe:
         cmd += ["-c:s", "mov_text", "-metadata:s:s:0", "language=eng"]
     cmd += [

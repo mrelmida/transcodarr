@@ -97,37 +97,41 @@ def file_needs_transcode(file_path):
         target_audio_codec = get_setting("TARGET_AUDIO_CODEC", "aac")
         target_container = get_setting("TARGET_CONTAINER", ".mp4")
         target_resolution = get_setting("TARGET_RESOLUTION", "1920x1080")
+        video_mode = get_setting("VIDEO_STREAM_MODE", "encode")
+        audio_mode = get_setting("AUDIO_STREAM_MODE", "encode")
 
-        result = subprocess.run([
-            "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-            "stream=codec_name,width,height", "-of", "default=noprint_wrappers=1", file_path
-        ], capture_output=True, text=True)
+        if video_mode != "copy":
+            result = subprocess.run([
+                "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                "stream=codec_name,width,height", "-of", "default=noprint_wrappers=1", file_path
+            ], capture_output=True, text=True)
 
-        video_info = result.stdout
-        if target_video_codec not in video_info:
-            return True
-
-        # Skip resolution check when set to "source" (match any resolution)
-        if target_resolution.lower() == "1080p_max":
-            # Only needs transcode if source is above 1080p
-            for line in video_info.splitlines():
-                if line.startswith("height="):
-                    src_h = int(line.split("=")[1])
-                    if src_h > 1080:
-                        return True
-                    break
-        elif target_resolution.lower() != "source":
-            w, h = target_resolution.split("x")
-            if f"width={w}" not in video_info or f"height={h}" not in video_info:
+            video_info = result.stdout
+            if target_video_codec not in video_info:
                 return True
 
-        result = subprocess.run([
-            "ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
-            "stream=codec_name", "-of", "default=noprint_wrappers=1", file_path
-        ], capture_output=True, text=True)
+            # Skip resolution check when set to "source" (match any resolution)
+            if target_resolution.lower() == "1080p_max":
+                # Only needs transcode if source is above 1080p
+                for line in video_info.splitlines():
+                    if line.startswith("height="):
+                        src_h = int(line.split("=")[1])
+                        if src_h > 1080:
+                            return True
+                        break
+            elif target_resolution.lower() != "source":
+                w, h = target_resolution.split("x")
+                if f"width={w}" not in video_info or f"height={h}" not in video_info:
+                    return True
 
-        if target_audio_codec not in result.stdout:
-            return True
+        if audio_mode != "copy":
+            result = subprocess.run([
+                "ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                "stream=codec_name", "-of", "default=noprint_wrappers=1", file_path
+            ], capture_output=True, text=True)
+
+            if target_audio_codec not in result.stdout:
+                return True
 
         if not file_path.endswith(target_container):
             return True

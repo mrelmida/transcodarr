@@ -10,6 +10,9 @@ from web.shared_state import (
 )
 from transcodarr_core.database import (
     get_all_settings, get_setting, set_setting,
+    get_encoding_presets, create_encoding_preset,
+    update_encoding_preset, delete_encoding_preset,
+    restore_default_presets,
 )
 from dotenv import dotenv_values
 
@@ -23,7 +26,7 @@ def api_get_settings(request: Request):
         db_values = get_all_settings()
         s = request.app.state.settings
 
-        result = {"schema": SETTINGS_SCHEMA, "values": {}}
+        result = {"schema": SETTINGS_SCHEMA, "values": {}, "encoding_presets": []}
 
         for section_key, section in SETTINGS_SCHEMA.items():
             for field_key in section["fields"]:
@@ -31,6 +34,11 @@ def api_get_settings(request: Request):
                 if value is None:
                     value = getattr(s, field_key, None)
                 result["values"][field_key] = value if value is not None else ""
+
+        try:
+            result["encoding_presets"] = get_encoding_presets()
+        except Exception:
+            pass
 
         return result
     except Exception as e:
@@ -219,3 +227,58 @@ def api_save_compression_tiers(data: dict = Body(default={})):
         return JSONResponse({"error": f"Failed to save: {e}"}, status_code=500)
 
     return {"status": "ok", "tiers": tiers}
+
+
+# ── Encoding Presets ────────────────────────────────────────────────────────
+
+@router.get("/encoding-presets")
+def api_get_presets():
+    """List all encoding presets."""
+    return {"presets": get_encoding_presets()}
+
+
+@router.post("/encoding-presets")
+def api_create_preset(data: dict = Body(default={})):
+    """Create a custom encoding preset."""
+    name = data.get("name", "").strip()
+    settings = data.get("settings", {})
+    if not name:
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    if not settings or not isinstance(settings, dict):
+        return JSONResponse({"error": "settings dict is required"}, status_code=400)
+
+    result = create_encoding_preset(name, settings)
+    if result is None:
+        return JSONResponse({"error": "Preset name already exists"}, status_code=409)
+    return {"status": "created", "preset": result}
+
+
+@router.put("/encoding-presets/{preset_id}")
+def api_update_preset(preset_id: int, data: dict = Body(default={})):
+    """Update a custom encoding preset. Cannot update built-in presets."""
+    name = data.get("name", "").strip()
+    settings = data.get("settings", {})
+    if not name:
+        return JSONResponse({"error": "name is required"}, status_code=400)
+    if not settings or not isinstance(settings, dict):
+        return JSONResponse({"error": "settings dict is required"}, status_code=400)
+
+    result = update_encoding_preset(preset_id, name, settings)
+    if result is None:
+        return JSONResponse({"error": "Preset not found or is a built-in preset"}, status_code=400)
+    return {"status": "updated", "preset": result}
+
+
+@router.delete("/encoding-presets/{preset_id}")
+def api_delete_preset(preset_id: int):
+    """Delete a custom encoding preset. Cannot delete built-in presets."""
+    if delete_encoding_preset(preset_id):
+        return {"status": "deleted"}
+    return JSONResponse({"error": "Preset not found or is a built-in preset"}, status_code=400)
+
+
+@router.post("/encoding-presets/restore")
+def api_restore_presets():
+    """Re-insert any missing built-in presets."""
+    count = restore_default_presets()
+    return {"status": "ok", "restored": count}

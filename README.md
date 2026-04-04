@@ -31,12 +31,16 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 ## Features
 
 **Transcoding**
+- Encoding presets — built-in profiles (Full Transcode, Audio Only, Remux + Subs, 4K Downscale, High Quality) plus custom user presets
+- Per-stream control — encode or copy (passthrough) video and audio independently
 - Configurable video codec (H.264, H.265, VP9, AV1), audio codec, container, resolution, preset, CRF
 - Compression tiers — automatically use slower presets for large files, faster for small ones
 - Dual worker pool: separate auto (watchdog) and manual (UI-triggered) workers, both resizable live
-- Batch transcode mode for re-encoding existing libraries
+- Batch transcode mode with batch tracking and stop controls for re-encoding existing libraries
 - Real-time progress tracking with percentage and file size
 - Output verification (duration, streams, file size sanity checks)
+
+![Encoding Presets](screenshots/screenshot-8.PNG)
 
 **Subtitles**
 - Multi-provider fetching: OpenSubtitles.com, Podnapisi, Addic7ed
