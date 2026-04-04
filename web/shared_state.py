@@ -216,29 +216,31 @@ SETTINGS_SCHEMA = {
             ]},
         }
     },
-    "radarr": {
-        "label": "Radarr",
+    "integrations": {
+        "label": "Integrations",
+        "type": "integrations",
         "fields": {
             "RADARR_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:7878"},
             "RADARR_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
             "RADARR_PATH_FROM": {"label": "Path From", "type": "text", "placeholder": "/downloads/movies"},
             "RADARR_PATH_TO": {"label": "Path To", "type": "text", "placeholder": "/movies"},
-        }
-    },
-    "sonarr": {
-        "label": "Sonarr",
-        "fields": {
             "SONARR_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:8989"},
             "SONARR_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
             "SONARR_PATH_FROM": {"label": "Path From", "type": "text", "placeholder": "/downloads/tv"},
             "SONARR_PATH_TO": {"label": "Path To", "type": "text", "placeholder": "/tv"},
-        }
-    },
-    "jellyfin": {
-        "label": "Jellyfin",
-        "fields": {
             "JELLYFIN_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:8096"},
             "JELLYFIN_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
+            "TVDB_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
+            "TMDB_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
+            "OMDB_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
+        },
+        "cards": {
+            "radarr":   {"label": "Radarr",   "desc": "Movie management",   "has_webhook": True,  "fields": ["RADARR_URL", "RADARR_API_KEY", "RADARR_PATH_FROM", "RADARR_PATH_TO"]},
+            "sonarr":   {"label": "Sonarr",   "desc": "TV management",      "has_webhook": True,  "fields": ["SONARR_URL", "SONARR_API_KEY", "SONARR_PATH_FROM", "SONARR_PATH_TO"]},
+            "jellyfin": {"label": "Jellyfin", "desc": "Media server",       "has_webhook": False, "fields": ["JELLYFIN_URL", "JELLYFIN_API_KEY"]},
+            "tvdb":     {"label": "TVDB",     "desc": "TV metadata",        "has_webhook": False, "fields": ["TVDB_API_KEY"]},
+            "tmdb":     {"label": "TMDB",     "desc": "Movie metadata",     "has_webhook": False, "fields": ["TMDB_API_KEY"]},
+            "omdb":     {"label": "OMDB",     "desc": "Movie metadata",     "has_webhook": False, "fields": ["OMDB_API_KEY"]},
         }
     },
     "subtitles": {
@@ -248,57 +250,40 @@ SETTINGS_SCHEMA = {
             "FFSUBSYNC_MAX_OFFSET": {"label": "Max Sync Offset", "type": "text", "placeholder": "0.5"},
         }
     },
-    "paths": {
-        "label": "Paths",
+    "general": {
+        "label": "General",
+        "type": "general_grouped",
         "fields": {
-            "WATCH_FOLDER": {"label": "Watch Folder", "type": "text", "placeholder": "/downloads"},
-            "OUTPUT_FOLDER": {"label": "Output Folder", "type": "text", "placeholder": "/output"},
-            "MEDIA_TEMP_FOLDER": {"label": "Temp Folder", "type": "text", "placeholder": "/temp"},
-        }
-    },
-    "api_keys": {
-        "label": "API Keys",
-        "fields": {
-            "TVDB_API_KEY": {"label": "TVDB API Key", "type": "password", "placeholder": ""},
-            "TMDB_API_KEY": {"label": "TMDB API Key", "type": "password", "placeholder": ""},
-            "OMDB_API_KEY": {"label": "OMDB API Key", "type": "password", "placeholder": ""},
-        }
-    },
-    "database": {
-        "label": "Database",
-        "fields": {
-            "POSTGRES_HOST": {"label": "PostgreSQL Host", "type": "text", "placeholder": "localhost"},
-            "POSTGRES_PORT": {"label": "PostgreSQL Port", "type": "text", "placeholder": "5432"},
-            "POSTGRES_DB": {"label": "Database Name", "type": "text", "placeholder": "transcodarr"},
-            "POSTGRES_USER": {"label": "Username", "type": "text", "placeholder": "transcodarr"},
-            "POSTGRES_PASSWORD": {"label": "Password", "type": "password", "placeholder": ""},
-        }
-    },
-    "advanced": {
-        "label": "Advanced",
-        "fields": {
-            "MANUAL_WORKERS": {"label": "Manual Workers", "type": "select", "hint": "Workers for UI-triggered transcodes", "options": [
+            "WATCH_FOLDER": {"label": "Watch Folder", "type": "text", "placeholder": "/downloads", "readonly": True, "group": "paths"},
+            "OUTPUT_FOLDER": {"label": "Output Folder", "type": "text", "placeholder": "/output", "readonly": True, "group": "paths"},
+            "MEDIA_TEMP_FOLDER": {"label": "Temp Folder", "type": "text", "placeholder": "/temp", "readonly": True, "group": "paths"},
+            "POSTGRES_HOST": {"label": "PostgreSQL Host", "type": "text", "placeholder": "localhost", "readonly": True, "group": "database"},
+            "POSTGRES_PORT": {"label": "PostgreSQL Port", "type": "text", "placeholder": "5432", "readonly": True, "group": "database"},
+            "POSTGRES_DB": {"label": "Database Name", "type": "text", "placeholder": "transcodarr", "readonly": True, "group": "database"},
+            "POSTGRES_USER": {"label": "Username", "type": "text", "placeholder": "transcodarr", "readonly": True, "group": "database"},
+            "POSTGRES_PASSWORD": {"label": "Password", "type": "password", "placeholder": "", "readonly": True, "group": "database"},
+            "MANUAL_WORKERS": {"label": "Manual Workers", "type": "select", "hint": "Workers for UI-triggered transcodes", "group": "advanced", "options": [
                 {"value": "0", "label": "0 (Disabled)"},
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},
                 {"value": "3", "label": "3"},
                 {"value": "4", "label": "4"},
             ]},
-            "AUTO_WORKERS": {"label": "Auto Workers", "type": "select", "hint": "Workers for automatic watchdog transcodes", "options": [
+            "AUTO_WORKERS": {"label": "Auto Workers", "type": "select", "hint": "Workers for automatic watchdog transcodes", "group": "advanced", "options": [
                 {"value": "0", "label": "0 (Disabled)"},
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},
                 {"value": "3", "label": "3"},
                 {"value": "4", "label": "4"},
             ]},
-            "TRANSCODARR_URL": {"label": "Transcodarr URL", "type": "text", "placeholder": "http://localhost:5025", "hint": "External URL for webhooks (auto-detected if empty)"},
-            "WATCH_DEBOUNCE_SEC": {"label": "Watch Debounce (sec)", "type": "text", "placeholder": "20"},
+            "TRANSCODARR_URL": {"label": "Transcodarr URL", "type": "text", "placeholder": "http://localhost:5025", "hint": "External URL for webhooks (auto-detected if empty)", "group": "advanced"},
+            "WATCH_DEBOUNCE_SEC": {"label": "Watch Debounce (sec)", "type": "text", "placeholder": "20", "group": "advanced"},
+        },
+        "groups": {
+            "advanced": {"label": "Advanced", "hint": ""},
+            "paths":    {"label": "Paths",    "hint": "Set via environment variables or docker-compose. Restart required to change."},
+            "database": {"label": "Database", "hint": "Set via environment variables or docker-compose. Restart required to change."},
         }
-    },
-    "connections": {
-        "label": "Connections",
-        "type": "connections",
-        "fields": {}
     },
 }
 

@@ -1749,9 +1749,15 @@ async function loadTV(forceRefresh = false){
     const container = $("#settings-container");
     container.innerHTML = "";
 
-    // Special handling for connections section
-    if (section.type === "connections") {
-      renderConnectionsSection(container);
+    // Special handling for integrations section
+    if (section.type === "integrations") {
+      renderIntegrationsSection(container, section);
+      return;
+    }
+
+    // Special handling for general grouped section
+    if (section.type === "general_grouped") {
+      renderGeneralSection(container, section);
       return;
     }
 
@@ -1779,6 +1785,222 @@ async function loadTV(forceRefresh = false){
     }
 
     container.appendChild(fieldsDiv);
+  }
+
+  // ----- General Grouped Section -----
+  function renderGeneralSection(container, section) {
+    const groups = section.groups || {};
+    const grid = document.createElement("div");
+    grid.className = "general-grid";
+    const groupKeys = Object.keys(groups);
+
+    for (const groupKey of groupKeys) {
+      const groupDef = groups[groupKey];
+      const fieldset = document.createElement("fieldset");
+      fieldset.className = "general-fieldset";
+      // Database spans full width below the top row
+      if (groupKey === "database") fieldset.classList.add("general-grid-full");
+
+      const legend = document.createElement("legend");
+      legend.className = "general-group-title";
+      legend.textContent = groupDef.label;
+      fieldset.appendChild(legend);
+
+      if (groupDef.hint) {
+        const hint = document.createElement("p");
+        hint.className = "general-group-hint";
+        hint.textContent = groupDef.hint;
+        fieldset.appendChild(hint);
+      }
+
+      const fieldsDiv = document.createElement("div");
+      fieldsDiv.className = "settings-fields";
+      for (const [fieldKey, field] of Object.entries(section.fields)) {
+        if (field.group === groupKey) {
+          renderSettingField(fieldsDiv, fieldKey, field);
+        }
+      }
+      fieldset.appendChild(fieldsDiv);
+      grid.appendChild(fieldset);
+    }
+    container.appendChild(grid);
+  }
+
+  // ----- Integrations Section -----
+  const INTEGRATION_ICONS = {
+    radarr:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 12.5L6 13V11l6 3.5L18 11v2l-6 3.5zM18 9l-6 3.5L6 9V7l6 3.5L18 7v2z"/></svg>',
+    sonarr:   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/><path d="M8 10l5 3-5 3z"/></svg>',
+    jellyfin: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l7 4.5-7 4.5z"/></svg>',
+    tvdb:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v2H4zm0 4h16v12H4zm4 3v6h8v-6zm2 2h4v2h-4z"/></svg>',
+    tmdb:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 4v1h-2V4c0-.55-.45-1-1-1H9c-.55 0-1 .45-1 1v1H6V4c0-.55-.45-1-1-1s-1 .45-1 1v16c0 .55.45 1 1 1s1-.45 1-1v-1h2v1c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-1h2v1c0 .55.45 1 1 1s1-.45 1-1V4c0-.55-.45-1-1-1s-1 .45-1 1zM8 17H6v-2h2zm0-4H6v-2h2zm0-4H6V7h2zm10 8h-2v-2h2zm0-4h-2v-2h2zm0-4h-2V7h2z"/></svg>',
+    omdb:     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>',
+  };
+
+  function getIntegrationStatus(cardKey, card, connData) {
+    if (card.has_webhook && connData && connData[cardKey]) {
+      const conn = connData[cardKey];
+      if (conn.connected) return {cls: "conn-connected", text: "Connected"};
+      if (conn.configured) return {cls: "conn-disconnected", text: "Not Connected"};
+    }
+    // Check if fields have values
+    const hasValues = card.fields.some(fk => settingsModified[fk] && settingsModified[fk] !== "");
+    if (hasValues) return {cls: "conn-configured", text: "Configured"};
+    return {cls: "conn-not-configured", text: "Not Configured"};
+  }
+
+  let _integrationsConnData = null;
+
+  async function renderIntegrationsSection(container, section) {
+    container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Loading integrations...</div>`;
+
+    try {
+      const r = await fetch(`${API}/connections`, {headers:{Accept:"application/json"}, cache:"no-store"});
+      _integrationsConnData = r.ok ? await r.json() : {};
+    } catch (e) {
+      _integrationsConnData = {};
+    }
+
+    container.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "integration-cards";
+
+    for (const [cardKey, card] of Object.entries(section.cards)) {
+      const status = getIntegrationStatus(cardKey, card, _integrationsConnData);
+      const cardEl = document.createElement("div");
+      cardEl.className = "integration-card";
+      cardEl.dataset.card = cardKey;
+      cardEl.innerHTML = `
+        <div class="integration-card-icon">${INTEGRATION_ICONS[cardKey] || ""}</div>
+        <div class="integration-card-name">${card.label}</div>
+        <div class="integration-card-desc">${card.desc}</div>
+        <span class="conn-badge ${status.cls}">${status.text}</span>
+      `;
+      cardEl.addEventListener("click", () => {
+        showIntegrationModal(cardKey, card, section);
+      });
+      grid.appendChild(cardEl);
+    }
+
+    container.appendChild(grid);
+  }
+
+  function refreshIntegrationCards() {
+    const section = settingsSchema.integrations;
+    if (!section) return;
+    const cards = document.querySelectorAll(".integration-card");
+    cards.forEach(cardEl => {
+      const cardKey = cardEl.dataset.card;
+      const card = section.cards[cardKey];
+      if (!card) return;
+      const status = getIntegrationStatus(cardKey, card, _integrationsConnData);
+      const badge = cardEl.querySelector(".conn-badge");
+      if (badge) {
+        badge.className = `conn-badge ${status.cls}`;
+        badge.textContent = status.text;
+      }
+    });
+  }
+
+  function showIntegrationModal(cardKey, card, section) {
+    const modal = document.createElement("div");
+    modal.className = "modal-overlay";
+    modal.innerHTML = `
+      <div class="modal-content integration-modal">
+        <div class="integration-modal-header">
+          <div class="integration-modal-icon">${INTEGRATION_ICONS[cardKey] || ""}</div>
+          <h3>${card.label}</h3>
+        </div>
+        <div class="integration-modal-fields"></div>
+        ${card.has_webhook ? '<div class="integration-modal-webhook"></div>' : ''}
+        <div class="integration-modal-footer">
+          <button class="btn btn-ghost modal-close-btn">Close</button>
+        </div>
+      </div>
+    `;
+
+    // Render settings fields
+    const fieldsContainer = modal.querySelector(".integration-modal-fields");
+    for (const fieldKey of card.fields) {
+      const field = section.fields[fieldKey];
+      if (field) renderSettingField(fieldsContainer, fieldKey, field);
+    }
+
+    // Render webhook controls if applicable
+    if (card.has_webhook) {
+      const webhookContainer = modal.querySelector(".integration-modal-webhook");
+      const conn = _integrationsConnData ? _integrationsConnData[cardKey] : null;
+      webhookContainer.innerHTML = `
+        <h4 class="integration-webhook-title">Webhook</h4>
+        <div class="connection-status">${renderConnectionStatus(conn)}</div>
+        <div class="connection-actions">${renderConnectionActions(cardKey, conn)}</div>
+      `;
+
+      webhookContainer.querySelectorAll(".btn-connect").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true; btn.textContent = "Connecting...";
+          try {
+            const r = await fetch(`${API}/connections/${btn.dataset.service}`, {method: "POST"});
+            if (r.ok) {
+              const cr = await fetch(`${API}/connections`, {headers:{Accept:"application/json"}, cache:"no-store"});
+              _integrationsConnData = cr.ok ? await cr.json() : {};
+              const conn2 = _integrationsConnData[cardKey];
+              webhookContainer.querySelector(".connection-status").innerHTML = renderConnectionStatus(conn2);
+              webhookContainer.querySelector(".connection-actions").innerHTML = renderConnectionActions(cardKey, conn2);
+              attachWebhookListeners(webhookContainer, cardKey, card, section);
+              refreshIntegrationCards();
+            } else {
+              const d = await r.json(); alert(`Failed: ${d.error || "Unknown error"}`);
+              btn.disabled = false; btn.textContent = "Connect";
+            }
+          } catch (e) { alert(`Failed: ${e.message}`); btn.disabled = false; btn.textContent = "Connect"; }
+        });
+      });
+      webhookContainer.querySelectorAll(".btn-disconnect").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm(`Disconnect ${cardKey}? The webhook will be removed.`)) return;
+          btn.disabled = true; btn.textContent = "Disconnecting...";
+          try {
+            const r = await fetch(`${API}/connections/${btn.dataset.service}`, {method: "DELETE"});
+            if (r.ok) {
+              const cr = await fetch(`${API}/connections`, {headers:{Accept:"application/json"}, cache:"no-store"});
+              _integrationsConnData = cr.ok ? await cr.json() : {};
+              const conn2 = _integrationsConnData[cardKey];
+              webhookContainer.querySelector(".connection-status").innerHTML = renderConnectionStatus(conn2);
+              webhookContainer.querySelector(".connection-actions").innerHTML = renderConnectionActions(cardKey, conn2);
+              attachWebhookListeners(webhookContainer, cardKey, card, section);
+              refreshIntegrationCards();
+            } else {
+              const d = await r.json(); alert(`Failed: ${d.error || "Unknown error"}`);
+              btn.disabled = false; btn.textContent = "Disconnect";
+            }
+          } catch (e) { alert(`Failed: ${e.message}`); btn.disabled = false; btn.textContent = "Disconnect"; }
+        });
+      });
+      webhookContainer.querySelectorAll(".btn-test").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true; btn.textContent = "Testing...";
+          try {
+            const r = await fetch(`${API}/connections/${btn.dataset.service}/test`, {method: "POST"});
+            const d = await r.json();
+            alert(r.ok ? `${cardKey} test successful!` : `Test failed: ${d.error || "Unknown error"}`);
+          } catch (e) { alert(`Test failed: ${e.message}`); }
+          finally { btn.disabled = false; btn.textContent = "Test"; }
+        });
+      });
+    }
+
+    // Close handlers
+    const closeModal = () => { modal.remove(); refreshIntegrationCards(); updateSettingsUI(); };
+    modal.querySelector(".modal-close-btn").addEventListener("click", closeModal);
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+    const escHandler = (e) => { if (e.key === "Escape") { closeModal(); document.removeEventListener("keydown", escHandler); } };
+    document.addEventListener("keydown", escHandler);
+
+    document.body.appendChild(modal);
+  }
+
+  function attachWebhookListeners(webhookContainer, cardKey, card, section) {
+    // Re-attach listeners after innerHTML replacement — handled inline above
   }
 
   function renderSettingField(parent, fieldKey, field) {
