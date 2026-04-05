@@ -89,26 +89,31 @@ docker compose up -d --build
 
 ### Media Paths
 
-Set 4 paths in your `.env` pointing to wherever your media lives — any folder names, any mount points:
+Transcodarr uses separate **watch** and **output** paths. Watch paths are where your download client (qBittorrent, SABnzbd, etc.) drops completed files — this is a processing area, not your media library. Output paths are where transcoded files end up — this is what Jellyfin/Plex/Emby points at.
+
+> **Important:** Watch and output paths must be different locations. Do not point watch paths at your existing media library — Transcodarr will attempt to re-encode everything in it.
+
+Set 4 paths in your `.env`:
 
 ```bash
-MOVIES_WATCH_PATH=/path/to/incoming/movies    # Where new movies arrive
-TV_WATCH_PATH=/path/to/incoming/tv            # Where new TV shows arrive
-MOVIES_OUTPUT_PATH=/path/to/library/movies    # Where transcoded movies go
-TV_OUTPUT_PATH=/path/to/library/tv            # Where transcoded TV goes
+MOVIES_WATCH_PATH=/path/to/downloads/movies   # Download client drops movies here
+TV_WATCH_PATH=/path/to/downloads/tv           # Download client drops TV here
+MOVIES_OUTPUT_PATH=/path/to/library/movies    # Transcoded movies land here (Jellyfin/Plex root)
+TV_OUTPUT_PATH=/path/to/library/tv            # Transcoded TV lands here (Jellyfin/Plex root)
 ```
 
-Movies and TV can live on completely separate drives or NAS mounts. The folders can be named anything.
+Movies and TV can live on completely separate drives or NAS mounts. The folders can be named anything — there's no requirement to use "movies" or "tv" as folder names.
+
+**Typical flow:** Radarr/Sonarr tells your download client to save files → download client writes to the watch path → Transcodarr picks them up, transcodes, and writes to the output path → Radarr/Sonarr updates its records → Jellyfin refreshes.
 
 ### Configure
 
 Open `http://localhost:5025` and configure through the Settings page:
 
 1. **Encoding** — Set your target codec, resolution, preset, CRF
-2. **Radarr/Sonarr** — Add URLs and API keys for path management
-3. **Jellyfin** — Add URL and API key for library refresh
-4. **Subtitles** — Enable providers and add accounts (OpenSubtitles.com requires login)
-5. **Advanced** — Set worker counts (auto workers for watchdog, manual workers for UI-triggered jobs)
+2. **Integrations** — Add Radarr/Sonarr URLs and API keys for path management, Jellyfin for library refresh
+3. **Subtitles** — Enable providers and add accounts (OpenSubtitles.com requires login)
+4. **General** — Verify your media paths, set worker counts
 
 Click **Start** in the header to begin watching for files.
 
