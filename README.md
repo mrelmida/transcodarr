@@ -71,64 +71,70 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 
 ## Quick Start
 
-### Option A: Bundled Postgres (recommended)
+### 1. Configure your `.env`
 
 ```bash
 cp .env.example .env
-# Edit .env — set media paths, POSTGRES_PASSWORD, FLASK_SECRET, ADMIN_API_KEY
+```
+
+Edit `.env` and set these required values:
+
+```bash
+# Where your media lives (any folder names, any drives)
+MOVIES_WATCH_PATH=/path/to/downloads/movies   # Where download client drops movies
+TV_WATCH_PATH=/path/to/downloads/tv           # Where download client drops TV
+MOVIES_OUTPUT_PATH=/path/to/library/movies    # Transcoded movies go here (Jellyfin/Plex root)
+TV_OUTPUT_PATH=/path/to/library/tv            # Transcoded TV goes here (Jellyfin/Plex root)
+
+# Database
+POSTGRES_PASSWORD=pick-a-strong-password
+
+# Security (change these to random strings)
+FLASK_SECRET=change-me-to-a-random-string
+ADMIN_API_KEY=change-me-to-a-random-string
+```
+
+> **Important:** Watch and output paths must be different locations. Watch paths are a processing area where your download client drops files — do not point them at your existing media library.
+
+Movies and TV can live on completely separate drives or NAS mounts. The folders can be named anything.
+
+### 2. Start the container
+
+**With bundled Postgres** (recommended for new setups):
+```bash
 docker compose -f docker-compose.postgres.yml up -d --build
 ```
 
-### Option B: External Postgres
-
+**With an external Postgres instance** (set `POSTGRES_HOST` in `.env`):
 ```bash
-cp .env.example .env
-# Edit .env — set POSTGRES_HOST to your DB server, plus all other required vars
 docker compose up -d --build
 ```
 
-### Media Paths
+### 3. Configure in the UI
 
-Transcodarr uses separate **watch** and **output** paths. Watch paths are where your download client (qBittorrent, SABnzbd, etc.) drops completed files — this is a processing area, not your media library. Output paths are where transcoded files end up — this is what Jellyfin/Plex/Emby points at.
+Open `http://localhost:5025` and set up through the Settings page:
 
-> **Important:** Watch and output paths must be different locations. Do not point watch paths at your existing media library — Transcodarr will attempt to re-encode everything in it.
+1. **Encoding** — Choose your target codec, resolution, preset, CRF
+2. **Integrations** — Add Radarr/Sonarr URLs and API keys for path management, Jellyfin for library refresh
+3. **Subtitles** — Enable providers and add accounts (OpenSubtitles.com requires login)
+4. **General** — Verify your media paths are correct, set worker counts
 
-Set 4 paths in your `.env`:
+Click **Start** in the header to begin watching for new files.
 
-```bash
-MOVIES_WATCH_PATH=/path/to/downloads/movies   # Download client drops movies here
-TV_WATCH_PATH=/path/to/downloads/tv           # Download client drops TV here
-MOVIES_OUTPUT_PATH=/path/to/library/movies    # Transcoded movies land here (Jellyfin/Plex root)
-TV_OUTPUT_PATH=/path/to/library/tv            # Transcoded TV lands here (Jellyfin/Plex root)
-```
-
-Movies and TV can live on completely separate drives or NAS mounts. The folders can be named anything — there's no requirement to use "movies" or "tv" as folder names.
-
-**Typical flow:** Radarr/Sonarr tells your download client to save files → download client writes to the watch path → Transcodarr picks them up, transcodes, and writes to the output path → Radarr/Sonarr updates its records → Jellyfin refreshes.
+**Typical flow:** Download client saves file → watch path → Transcodarr transcodes → output path → Radarr/Sonarr paths updated → Jellyfin refreshes.
 
 ### Re-encode Only Mode
 
-If you don't have a download pipeline and just want to re-encode an existing library, you can skip watch paths entirely. Use the re-encode compose file:
+If you don't use Radarr/Sonarr and just want to re-encode an existing library, skip the watch paths:
 
 ```bash
 cp .env.example .env
-# Edit .env — set only output paths (your existing library), plus DB and security vars
-# Leave MOVIES_WATCH_PATH and TV_WATCH_PATH blank or remove them
+# Edit .env — set only MOVIES_OUTPUT_PATH and TV_OUTPUT_PATH to your existing library
+# Leave MOVIES_WATCH_PATH and TV_WATCH_PATH blank
 docker compose -f docker-compose.reencode.yml up -d --build
 ```
 
-In this mode the watchdog is disabled — no automatic file detection. Instead, use the web UI to browse your library and trigger batch re-encodes manually. Transcodarr processes files in-place: it copies each file to a temp folder, transcodes it, and replaces the original.
-
-### Configure
-
-Open `http://localhost:5025` and configure through the Settings page:
-
-1. **Encoding** — Set your target codec, resolution, preset, CRF
-2. **Integrations** — Add Radarr/Sonarr URLs and API keys for path management, Jellyfin for library refresh
-3. **Subtitles** — Enable providers and add accounts (OpenSubtitles.com requires login)
-4. **General** — Verify your media paths, set worker counts
-
-Click **Start** in the header to begin watching for files.
+The watchdog is disabled in this mode. Use the web UI to browse your library and trigger batch re-encodes manually. Files are processed in-place — copied to temp, transcoded, then the original is replaced.
 
 ![Auto Preset Rules](screenshots/screenshot-4.png)
 
