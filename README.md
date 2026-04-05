@@ -106,6 +106,19 @@ Movies and TV can live on completely separate drives or NAS mounts. The folders 
 
 **Typical flow:** Radarr/Sonarr tells your download client to save files → download client writes to the watch path → Transcodarr picks them up, transcodes, and writes to the output path → Radarr/Sonarr updates its records → Jellyfin refreshes.
 
+### Re-encode Only Mode
+
+If you don't have a download pipeline and just want to re-encode an existing library, you can skip watch paths entirely. Use the re-encode compose file:
+
+```bash
+cp .env.example .env
+# Edit .env — set only output paths (your existing library), plus DB and security vars
+# Leave MOVIES_WATCH_PATH and TV_WATCH_PATH blank or remove them
+docker compose -f docker-compose.reencode.yml up -d --build
+```
+
+In this mode the watchdog is disabled — no automatic file detection. Instead, use the web UI to browse your library and trigger batch re-encodes manually. Transcodarr processes files in-place: it copies each file to a temp folder, transcodes it, and replaces the original.
+
 ### Configure
 
 Open `http://localhost:5025` and configure through the Settings page:

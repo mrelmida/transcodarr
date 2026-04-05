@@ -45,7 +45,9 @@ async def lifespan(app: FastAPI):
     from transcodarr_core.config import get_media_paths
     _mpaths = get_media_paths(s)
     for pname, pval in _mpaths.items():
-        if os.path.isdir(pval):
+        if not pval:
+            logging.info("[STARTUP] %s = (not configured, watchdog disabled for %s)", pname, pname)
+        elif os.path.isdir(pval):
             logging.info("[STARTUP] %s = %s OK", pname, pval)
         else:
             logging.error("[STARTUP] %s = %s does not exist!", pname, pval)

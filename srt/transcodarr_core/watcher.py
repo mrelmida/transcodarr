@@ -82,10 +82,14 @@ def start_watchdog(
         _mpaths = get_media_paths(s)
         handler = _MovieHandler(kick)
         observer = Observer()
+        _scheduled = 0
         for _wpath in [_mpaths["movies_watch"], _mpaths["tv_watch"]]:
-            if os.path.isdir(_wpath):
+            if _wpath and os.path.isdir(_wpath):
                 observer.schedule(handler, _wpath, recursive=True)
                 logging.info(f"[Watchdog] Watching: {_wpath} (recursive)")
+                _scheduled += 1
+        if _scheduled == 0:
+            logging.info("[Watchdog] No watch paths configured — running in re-encode only mode")
         observer.start()
     else:
         logging.warning("[Watchdog] python-watchdog not installed; falling back to 60s polling.")
