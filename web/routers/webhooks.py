@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import logging
 
-from web.shared_state import remap_path, write_meta_json
+from web.shared_state import write_meta_json
 
 router = APIRouter()
 
@@ -39,11 +39,9 @@ async def webhook_radarr(request: Request):
     file_path = movie_file.get("path", "")
     file_rel = movie_file.get("relativePath", "")
 
-    s = request.app.state.settings
-    path_from = getattr(s, "RADARR_PATH_FROM", "") or ""
-    path_to = getattr(s, "RADARR_PATH_TO", "") or ""
-    movie_path = remap_path(movie_path, path_from, path_to)
-    file_path = remap_path(file_path, path_from, path_to)
+    from transcodarr_core.radarr import remap_from_radarr
+    movie_path = remap_from_radarr(movie_path)
+    file_path = remap_from_radarr(file_path)
 
     if not file_path and not movie_path:
         return JSONResponse({"error": "No file path in payload"}, status_code=400)
@@ -106,11 +104,9 @@ async def webhook_sonarr(request: Request):
     file_path = episode_file.get("path", "")
     file_rel = episode_file.get("relativePath", "")
 
-    s = request.app.state.settings
-    path_from = getattr(s, "SONARR_PATH_FROM", "") or ""
-    path_to = getattr(s, "SONARR_PATH_TO", "") or ""
-    series_path = remap_path(series_path, path_from, path_to)
-    file_path = remap_path(file_path, path_from, path_to)
+    from transcodarr_core.sonarr import remap_from_sonarr
+    series_path = remap_from_sonarr(series_path)
+    file_path = remap_from_sonarr(file_path)
 
     if not file_path:
         return JSONResponse({"error": "No file path in payload"}, status_code=400)

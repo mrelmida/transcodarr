@@ -3,10 +3,14 @@ import logging
 import requests
 from pathlib import Path
 from typing import Optional, List, Dict
-from transcodarr_core.config import Settings
+from transcodarr_core.config import Settings, get_media_paths
 
 
 settings = Settings()
+
+# Cached remap prefixes: (radarr_prefix, local_prefix) or None
+_remap_cache: Optional[tuple[str, str]] = None
+_remap_detected: bool = False
 
 
 # -------------------------------------------------------------------
@@ -22,26 +26,83 @@ def _session() -> requests.Session:
     return s
 
 def _normalize_path(p: str) -> str:
-    # Make comparison robust across OS/mount styles
-    # Use POSIX-like, trim trailing slashes, lower-case
     return Path(p).as_posix().rstrip("/").lower()
 
 def _dir_of(path_like: str) -> str:
     p = Path(path_like)
     return str(p if p.is_dir() else p.parent)
 
-def _remap_for_radarr(local_dir: str) -> str:
-    """Translate local (container) path to Radarr's view.
-    PATH_FROM = Radarr's prefix, PATH_TO = Transcodarr's prefix.
-    Reverse the webhook mapping: replace PATH_TO with PATH_FROM."""
+def _detect_remap() -> Optional[tuple[str, str]]:
+    """Auto-detect path remap by comparing a Radarr movie path to our local watch path.
+    Returns (radarr_prefix, local_prefix) or None if no remap needed."""
+    global _remap_cache, _remap_detected
+    if _remap_detected:
+        return _remap_cache
+    _remap_detected = True
+
+    # Manual override still works if set
     if settings.RADARR_PATH_FROM and settings.RADARR_PATH_TO:
-        try:
-            local_posix = Path(local_dir).as_posix()
-            if local_posix.startswith(settings.RADARR_PATH_TO):
-                return local_posix.replace(settings.RADARR_PATH_TO, settings.RADARR_PATH_FROM, 1)
-        except Exception:
-            pass
+        _remap_cache = (settings.RADARR_PATH_FROM, settings.RADARR_PATH_TO)
+        logging.info("[RADARR] Using manual path remap: %s <-> %s", settings.RADARR_PATH_FROM, settings.RADARR_PATH_TO)
+        return _remap_cache
+
+    try:
+        _check_env()
+        mp = get_media_paths()
+        local_prefix = mp["movies_watch"].rstrip("/")
+        if not local_prefix:
+            return None
+
+        # Get a sample movie from Radarr to detect its path prefix
+        movies = _get_all_movies()
+        if not movies:
+            logging.debug("[RADARR] No movies in Radarr, cannot auto-detect remap")
+            return None
+
+        # Find a movie whose folder name matches one in our watch path
+        local_folders = set()
+        if os.path.isdir(local_prefix):
+            local_folders = {d.lower() for d in os.listdir(local_prefix) if os.path.isdir(os.path.join(local_prefix, d))}
+
+        for m in movies:
+            radarr_path = (m.get("path") or "").rstrip("/")
+            if not radarr_path:
+                continue
+            radarr_folder = Path(radarr_path).name.lower()
+            if radarr_folder in local_folders:
+                # Found a match — derive prefixes
+                radarr_prefix = str(Path(radarr_path).parent)
+                if _normalize_path(radarr_prefix) == _normalize_path(local_prefix):
+                    logging.info("[RADARR] Paths match, no remap needed")
+                    return None
+                _remap_cache = (radarr_prefix, local_prefix)
+                logging.info("[RADARR] Auto-detected path remap: Radarr=%s <-> Local=%s", radarr_prefix, local_prefix)
+                return _remap_cache
+
+        logging.debug("[RADARR] Could not auto-detect remap (no matching folders)")
+    except Exception as e:
+        logging.debug("[RADARR] Auto-detect remap failed: %s", e)
+
+    return None
+
+def _remap_for_radarr(local_dir: str) -> str:
+    """Translate local (container) path to Radarr's view using auto-detected remap."""
+    remap = _detect_remap()
+    if remap:
+        radarr_prefix, local_prefix = remap
+        local_posix = Path(local_dir).as_posix()
+        if local_posix.startswith(local_prefix):
+            return local_posix.replace(local_prefix, radarr_prefix, 1)
     return local_dir
+
+def remap_from_radarr(radarr_path: str) -> str:
+    """Translate Radarr path to local (container) path using auto-detected remap."""
+    remap = _detect_remap()
+    if remap:
+        radarr_prefix, local_prefix = remap
+        if radarr_path.startswith(radarr_prefix):
+            return radarr_path.replace(radarr_prefix, local_prefix, 1)
+    return radarr_path
 
 def _get_all_movies() -> List[Dict]:
     _check_env()

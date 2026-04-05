@@ -1,17 +1,23 @@
 # src/transcodarr_core/sonarr.py
 from __future__ import annotations
+import os
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Iterable
 import requests
 import re
-from .config import Settings
+from .config import Settings, get_media_paths
 
 settings = Settings()
 
 # Detect SxxEyy-like tokens and typical video files
 _EP_CODE_RE = re.compile(r"[Ss]\d{1,2}[ ._-]?[Ee]\d{1,3}")
 _VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov"}
+
+# Cached remap prefixes: (sonarr_prefix, local_prefix) or None
+_remap_cache: Optional[tuple[str, str]] = None
+_remap_detected: bool = False
+
 # -------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------
@@ -25,25 +31,82 @@ def _session() -> requests.Session:
     return s
 
 def _normalize_path(p: str) -> str:
-    # POSIX-ish, strip trailing slash, lower-case
     return Path(p).as_posix().rstrip("/").lower()
 
 def _dir_of(path_like: str) -> str:
     p = Path(path_like)
     return str(p if p.is_dir() else p.parent)
 
-def _remap_for_sonarr(local_path: str) -> str:
-    """Translate local (container) path to Sonarr's view.
-    PATH_FROM = Sonarr's prefix, PATH_TO = Transcodarr's prefix.
-    Reverse the webhook mapping: replace PATH_TO with PATH_FROM."""
+def _detect_remap() -> Optional[tuple[str, str]]:
+    """Auto-detect path remap by comparing a Sonarr series path to our local watch path.
+    Returns (sonarr_prefix, local_prefix) or None if no remap needed."""
+    global _remap_cache, _remap_detected
+    if _remap_detected:
+        return _remap_cache
+    _remap_detected = True
+
+    # Manual override still works if set
     if settings.SONARR_PATH_FROM and settings.SONARR_PATH_TO:
-        try:
-            posix = Path(local_path).as_posix()
-            if posix.startswith(settings.SONARR_PATH_TO):
-                return posix.replace(settings.SONARR_PATH_TO, settings.SONARR_PATH_FROM, 1)
-        except Exception:
-            pass
+        _remap_cache = (settings.SONARR_PATH_FROM, settings.SONARR_PATH_TO)
+        logging.info("[SONARR] Using manual path remap: %s <-> %s", settings.SONARR_PATH_FROM, settings.SONARR_PATH_TO)
+        return _remap_cache
+
+    try:
+        _check_env()
+        mp = get_media_paths()
+        local_prefix = mp["tv_watch"].rstrip("/")
+        if not local_prefix:
+            return None
+
+        # Get series from Sonarr to detect its path prefix
+        series_list = _get_all_series()
+        if not series_list:
+            logging.debug("[SONARR] No series in Sonarr, cannot auto-detect remap")
+            return None
+
+        # Find a series whose folder name matches one in our watch path
+        local_folders = set()
+        if os.path.isdir(local_prefix):
+            local_folders = {d.lower() for d in os.listdir(local_prefix) if os.path.isdir(os.path.join(local_prefix, d))}
+
+        for s in series_list:
+            sonarr_path = (s.get("path") or "").rstrip("/")
+            if not sonarr_path:
+                continue
+            sonarr_folder = Path(sonarr_path).name.lower()
+            if sonarr_folder in local_folders:
+                sonarr_prefix = str(Path(sonarr_path).parent)
+                if _normalize_path(sonarr_prefix) == _normalize_path(local_prefix):
+                    logging.info("[SONARR] Paths match, no remap needed")
+                    return None
+                _remap_cache = (sonarr_prefix, local_prefix)
+                logging.info("[SONARR] Auto-detected path remap: Sonarr=%s <-> Local=%s", sonarr_prefix, local_prefix)
+                return _remap_cache
+
+        logging.debug("[SONARR] Could not auto-detect remap (no matching folders)")
+    except Exception as e:
+        logging.debug("[SONARR] Auto-detect remap failed: %s", e)
+
+    return None
+
+def _remap_for_sonarr(local_path: str) -> str:
+    """Translate local (container) path to Sonarr's view using auto-detected remap."""
+    remap = _detect_remap()
+    if remap:
+        sonarr_prefix, local_prefix = remap
+        posix = Path(local_path).as_posix()
+        if posix.startswith(local_prefix):
+            return posix.replace(local_prefix, sonarr_prefix, 1)
     return local_path
+
+def remap_from_sonarr(sonarr_path: str) -> str:
+    """Translate Sonarr path to local (container) path using auto-detected remap."""
+    remap = _detect_remap()
+    if remap:
+        sonarr_prefix, local_prefix = remap
+        if sonarr_path.startswith(sonarr_prefix):
+            return sonarr_path.replace(sonarr_prefix, local_prefix, 1)
+    return sonarr_path
 
 def _get_all_series() -> List[Dict]:
     _check_env()
