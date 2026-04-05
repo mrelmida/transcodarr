@@ -206,15 +206,18 @@ For each file detected by the watchdog:
 MOVIES_WATCH_PATH/             # Incoming movies (any path)
   Movie Name (2020)/
     Movie Name (2020).mkv
+    Movie Name (2020).meta.json  # Written by Radarr webhook
 
 TV_WATCH_PATH/                 # Incoming TV (any path)
   Show Name/
     Season 01/
       Show Name - S01E01.mkv
+      Show Name - S01E01.meta.json  # Written by Sonarr webhook
 
 MOVIES_OUTPUT_PATH/            # Transcoded movies
   Movie Name (2020)/
     Movie Name (2020).mp4      # Transcoded with embedded subs
+    Movie Name (2020).nfo
     poster.jpg
 
 TV_OUTPUT_PATH/                # Transcoded TV
@@ -223,6 +226,7 @@ TV_OUTPUT_PATH/                # Transcoded TV
     poster.jpg
     Season 01/
       Show Name - S01E01.mp4
+      Show Name - S01E01.nfo
 
 /temp/                         # Temp working files (cleaned automatically)
   movies/
