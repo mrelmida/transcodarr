@@ -299,9 +299,11 @@ def _build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str)
     Returns the path to the written .meta.json, or None on failure.
     """
     try:
-        path_posix = Path(file_path).as_posix().lower()
-        is_tv = "/tv/" in path_posix
-        is_movie = "/movies/" in path_posix
+        from .config import get_media_paths
+        _paths = get_media_paths(settings)
+        path_posix = Path(file_path).as_posix()
+        is_movie = path_posix.startswith(_paths["movies_watch"]) or path_posix.startswith(_paths["movies_output"])
+        is_tv = path_posix.startswith(_paths["tv_watch"]) or path_posix.startswith(_paths["tv_output"])
         base_name = os.path.splitext(os.path.basename(file_path))[0]
 
         if is_movie:
@@ -402,7 +404,7 @@ def _build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str)
             logging.info("[RE-ENCODE] Sonarr lookup: no match for %s", file_path)
 
         else:
-            logging.info("[RE-ENCODE] Path doesn't contain /tv/ or /movies/, skipping arr lookup: %s", file_path)
+            logging.info("[RE-ENCODE] Path doesn't match configured watch/output paths, skipping arr lookup: %s", file_path)
 
     except Exception as e:
         logging.warning("[RE-ENCODE] Arr meta build failed for %s: %s", file_path, e)
@@ -479,14 +481,17 @@ def _write_nfo_for_reencode(meta: dict, video_path: str) -> None:
 def transcode_file(file_path: str, settings: Settings):
     try:
         s = settings or Settings()
+        from .config import get_media_paths
+        _mpaths = get_media_paths(s)
         base_name   = os.path.splitext(os.path.basename(file_path))[0]
         src_dir   = os.path.dirname(file_path)
-        relative_dir = os.path.relpath(src_dir, s.WATCH_FOLDER)
 
-        # ---------- detect re-encode (source lives inside OUTPUT_FOLDER) ----------
-        _output_resolved = os.path.realpath(s.OUTPUT_FOLDER)
+        # ---------- detect re-encode (source lives inside any output path) ----------
         _src_resolved = os.path.realpath(file_path)
-        is_reencode = _src_resolved.startswith(_output_resolved + os.sep)
+        is_reencode = any(
+            _src_resolved.startswith(os.path.realpath(p) + os.sep)
+            for p in [_mpaths["movies_output"], _mpaths["tv_output"]]
+        )
 
         if is_reencode:
             logging.info("[RE-ENCODE] Detected re-encode for: %s", file_path)
@@ -507,12 +512,35 @@ def transcode_file(file_path: str, settings: Settings):
         # ---------- path calculation (branched for re-encode) ----------
         temp_root = s.MEDIA_TEMP_FOLDER or "/temp"
         if is_reencode:
-            relative_dir = os.path.relpath(src_dir, s.OUTPUT_FOLDER)
+            # Determine which output path this file is under
+            _media_type = "movies"
+            for _okey, _mtype in [("movies_output", "movies"), ("tv_output", "tv")]:
+                _oresolved = os.path.realpath(_mpaths[_okey])
+                if _src_resolved.startswith(_oresolved + os.sep):
+                    relative_dir = os.path.relpath(src_dir, _mpaths[_okey])
+                    _media_type = _mtype
+                    break
+            else:
+                relative_dir = os.path.basename(src_dir)
             output_dir = src_dir
-            temp_dir = os.path.join(temp_root, "_reencode", relative_dir)
+            temp_dir = os.path.join(temp_root, "_reencode", _media_type, relative_dir)
         else:
-            output_dir = os.path.join(s.OUTPUT_FOLDER, relative_dir)
-            temp_dir = os.path.join(temp_root, relative_dir)
+            # Determine output dir from configured media paths
+            _fp = file_path.replace(os.sep, "/")
+            if _fp.startswith(_mpaths["movies_watch"]):
+                relative_dir = os.path.relpath(src_dir, _mpaths["movies_watch"])
+                output_dir = os.path.join(_mpaths["movies_output"], relative_dir)
+                _media_type = "movies"
+            elif _fp.startswith(_mpaths["tv_watch"]):
+                relative_dir = os.path.relpath(src_dir, _mpaths["tv_watch"])
+                output_dir = os.path.join(_mpaths["tv_output"], relative_dir)
+                _media_type = "tv"
+            else:
+                relative_dir = os.path.basename(src_dir)
+                output_dir = os.path.join(_mpaths["movies_output"], relative_dir)
+                _media_type = "movies"
+                logging.warning("[TRANSCODE] File not under any configured watch path, defaulting to movies output: %s", file_path)
+            temp_dir = os.path.join(temp_root, _media_type, relative_dir)
 
         os.makedirs(temp_dir, exist_ok=True)
 
@@ -862,17 +890,27 @@ def copy_compatible_file(file_path: str, settings: Settings):
     """Copy already-compatible file to output without transcoding."""
     try:
         s = settings or Settings()
+        from .config import get_media_paths
+        _mpaths = get_media_paths(s)
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         src_dir = os.path.dirname(file_path)
-        relative_dir = os.path.relpath(src_dir, s.WATCH_FOLDER)
+
+        # Determine output dir from configured media paths
+        _fp = file_path.replace(os.sep, "/")
+        if _fp.startswith(_mpaths["movies_watch"]):
+            relative_dir = os.path.relpath(src_dir, _mpaths["movies_watch"])
+            output_dir = os.path.join(_mpaths["movies_output"], relative_dir)
+        elif _fp.startswith(_mpaths["tv_watch"]):
+            relative_dir = os.path.relpath(src_dir, _mpaths["tv_watch"])
+            output_dir = os.path.join(_mpaths["tv_output"], relative_dir)
+        else:
+            relative_dir = os.path.basename(src_dir)
+            output_dir = os.path.join(_mpaths["movies_output"], relative_dir)
 
         # Load meta for kind detection
         meta = load_unified_meta(file_path) or {}
         kind = (meta.get("kind") or "").lower()
         ep_src = get_ep_code(file_path)
-
-        # Final destination
-        output_dir = os.path.join(s.OUTPUT_FOLDER, relative_dir)
         container = s.TARGET_CONTAINER or ".mp4"
         final_path = os.path.join(output_dir, base_name + container)
 
@@ -1016,91 +1054,102 @@ def walk_and_process(
     # Import here to avoid circular imports
     from transcodarr_core.worker_pool import get_worker_pool
     from transcodarr_core.database import is_ignored
+    from transcodarr_core.config import get_media_paths
 
     worker_pool = get_worker_pool()
     use_auto_pool = worker_pool and worker_pool.auto_workers > 0
 
     pending_futures = []
 
-    for root, _, files in os.walk(s.WATCH_FOLDER):
-        if stop_flag_fn and stop_flag_fn():
-            logging.info("Stop flag detected before directory scan. Exiting...")
-            break
+    # Walk configured watch paths (deduplicated, skip missing)
+    _mpaths = get_media_paths(s)
+    watch_dirs = []
+    for p in [_mpaths["movies_watch"], _mpaths["tv_watch"]]:
+        if p and os.path.isdir(p) and p not in watch_dirs:
+            watch_dirs.append(p)
+    if not watch_dirs:
+        logging.warning("[WALK] No configured watch paths found. Check MOVIES_WATCH_PATH and TV_WATCH_PATH.")
 
-        # Skip folder if sentinel exists
-        sentinel_path = os.path.join(root, SENTINEL_NAME)
-        if os.path.exists(sentinel_path):
-            logging.info(f"Skipping folder {root} — sentinel present ({SENTINEL_NAME}).")
-            continue
-
-        for name in files:
+    for _watch_dir in watch_dirs:
+        for root, _, files in os.walk(_watch_dir):
             if stop_flag_fn and stop_flag_fn():
-                logging.info("Stop flag detected mid-run. Exiting...")
+                logging.info("Stop flag detected before directory scan. Exiting...")
                 break
 
-            if not name.lower().endswith(VIDEO_EXTS):
+            # Skip folder if sentinel exists
+            sentinel_path = os.path.join(root, SENTINEL_NAME)
+            if os.path.exists(sentinel_path):
+                logging.info(f"Skipping folder {root} — sentinel present ({SENTINEL_NAME}).")
                 continue
 
-            file_path = os.path.join(root, name)
-
-            # Skip if file is being processed by any pool
-            if worker_pool and worker_pool.is_file_processing(file_path):
-                logging.info(f"Skipping {file_path} — already being processed.")
-                continue
-
-            # Skip if file is on the ignore list
-            try:
-                if is_ignored(file_path):
-                    logging.debug(f"Skipping {file_path} — on ignore list.")
-                    continue
-            except Exception:
-                pass  # Database might not be available, continue anyway
-
-            # If a final .mp4 already exists next to a non-mp4, skip
-            base_name = os.path.splitext(name)[0]
-            final_mp4_path = os.path.join(root, base_name + ".mp4")
-            if file_path.lower() != final_mp4_path.lower() and os.path.exists(final_mp4_path):
-                logging.info(f"Skipping {file_path} — final .mp4 already exists in this folder.")
-                continue
-
-            # Always transcode to ensure subs + audio normalization
-            fn = transcode_file_fn
-            fn_args = (file_path, s)
-            if file_needs_transcode(file_path):
-                logging.info(f"Needs transcode: {file_path}")
-            else:
-                logging.info(f"Already compatible but force-encoding for subs/audio: {file_path}")
-
-            if use_auto_pool:
-                # Wait for auto pool capacity (spin-wait with stop flag check)
-                while not worker_pool.can_accept_auto_job():
-                    if stop_flag_fn and stop_flag_fn():
-                        logging.info("Stop flag detected while waiting for auto pool capacity.")
-                        break
-                    time.sleep(1)
-
+            for name in files:
                 if stop_flag_fn and stop_flag_fn():
+                    logging.info("Stop flag detected mid-run. Exiting...")
                     break
 
-                future = worker_pool.submit_auto_job(file_path, fn, *fn_args)
-                if future:
-                    pending_futures.append(future)
+                if not name.lower().endswith(VIDEO_EXTS):
+                    continue
+
+                file_path = os.path.join(root, name)
+
+                # Skip if file is being processed by any pool
+                if worker_pool and worker_pool.is_file_processing(file_path):
+                    logging.info(f"Skipping {file_path} — already being processed.")
+                    continue
+
+                # Skip if file is on the ignore list
+                try:
+                    if is_ignored(file_path):
+                        logging.debug(f"Skipping {file_path} — on ignore list.")
+                        continue
+                except Exception:
+                    pass  # Database might not be available, continue anyway
+
+                # If a final .mp4 already exists next to a non-mp4, skip
+                base_name = os.path.splitext(name)[0]
+                final_mp4_path = os.path.join(root, base_name + ".mp4")
+                if file_path.lower() != final_mp4_path.lower() and os.path.exists(final_mp4_path):
+                    logging.info(f"Skipping {file_path} — final .mp4 already exists in this folder.")
+                    continue
+
+                # Always transcode to ensure subs + audio normalization
+                fn = transcode_file_fn
+                fn_args = (file_path, s)
+                if file_needs_transcode(file_path):
+                    logging.info(f"Needs transcode: {file_path}")
                 else:
-                    # Fallback: run inline if submit failed
+                    logging.info(f"Already compatible but force-encoding for subs/audio: {file_path}")
+
+                if use_auto_pool:
+                    # Wait for auto pool capacity (spin-wait with stop flag check)
+                    while not worker_pool.can_accept_auto_job():
+                        if stop_flag_fn and stop_flag_fn():
+                            logging.info("Stop flag detected while waiting for auto pool capacity.")
+                            break
+                        time.sleep(1)
+
+                    if stop_flag_fn and stop_flag_fn():
+                        break
+
+                    future = worker_pool.submit_auto_job(file_path, fn, *fn_args)
+                    if future:
+                        pending_futures.append(future)
+                    else:
+                        # Fallback: run inline if submit failed
+                        try:
+                            fn(*fn_args)
+                        except Exception as e:
+                            logging.error(f"[WALK] Unhandled error processing {file_path}: {e}")
+                            logging.error(traceback.format_exc())
+                            logging.info("[WALK] Continuing to next file...")
+                else:
+                    # No auto pool — run inline (sequential)
                     try:
                         fn(*fn_args)
                     except Exception as e:
                         logging.error(f"[WALK] Unhandled error processing {file_path}: {e}")
                         logging.error(traceback.format_exc())
                         logging.info("[WALK] Continuing to next file...")
-            else:
-                # No auto pool — run inline (sequential)
-                try:
-                    fn(*fn_args)
-                except Exception as e:
-                    logging.error(f"[WALK] Unhandled error processing {file_path}: {e}")
-                    logging.error(traceback.format_exc())
-                    logging.info("[WALK] Continuing to next file...")
 
     # Wait for all outstanding auto-pool futures to complete
     if pending_futures:

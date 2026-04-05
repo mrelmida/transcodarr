@@ -49,6 +49,10 @@ def api_status(request: Request):
         "status": "running" if running else "stopped",
         "watch_folder": s.WATCH_FOLDER,
         "output_folder": s.OUTPUT_FOLDER,
+        "movies_watch": s.MOVIES_WATCH_LABEL or s.MOVIES_WATCH_PATH,
+        "tv_watch": s.TV_WATCH_LABEL or s.TV_WATCH_PATH,
+        "movies_output": s.MOVIES_OUTPUT_LABEL or s.MOVIES_OUTPUT_PATH,
+        "tv_output": s.TV_OUTPUT_LABEL or s.TV_OUTPUT_PATH,
     }
 
 

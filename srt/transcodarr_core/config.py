@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     SONARR_PATH_FROM: str | None = None
     SONARR_PATH_TO: str | None = None
     WATCH_DEBOUNCE_SEC: float = 20.0
-    WATCH_FOLDER: str = "/downloads"
+    WATCH_FOLDER: str = "/watch"
     OUTPUT_FOLDER: str = "/output"
     MEDIA_TEMP_FOLDER: str = "/temp"
     SUBLIMINAL_OSCOM_USER: str | None = None
@@ -131,6 +131,19 @@ class Settings(BaseSettings):
 
     # Transcodarr external URL (for webhooks)
     TRANSCODARR_URL: str | None = None
+
+    # Media paths (infrastructure, set via docker-compose volumes)
+    MOVIES_WATCH_PATH: str = "/watch/movies"
+    TV_WATCH_PATH: str = "/watch/tv"
+    MOVIES_OUTPUT_PATH: str = "/output/movies"
+    TV_OUTPUT_PATH: str = "/output/tv"
+
+    # Display labels — host paths passed through for UI visibility
+    MOVIES_WATCH_LABEL: str = ""
+    TV_WATCH_LABEL: str = ""
+    MOVIES_OUTPUT_LABEL: str = ""
+    TV_OUTPUT_LABEL: str = ""
+    MEDIA_TEMP_LABEL: str = ""
 
     # Compression tiers (size-based preset/CRF overrides)
     COMPRESSION_TIERS_ENABLED: str = "false"
@@ -223,3 +236,14 @@ def get_setting(key: str, default=None):
 
     # Fall back to environment/Settings
     return getattr(Settings(), key, default)
+
+
+def get_media_paths(s: "Settings | None" = None) -> dict:
+    """Return media paths from environment/infrastructure settings."""
+    s = s or Settings()
+    return {
+        "movies_watch":  s.MOVIES_WATCH_PATH,
+        "tv_watch":      s.TV_WATCH_PATH,
+        "movies_output": s.MOVIES_OUTPUT_PATH,
+        "tv_output":     s.TV_OUTPUT_PATH,
+    }

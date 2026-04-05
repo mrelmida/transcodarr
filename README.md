@@ -75,7 +75,7 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 
 ```bash
 cp .env.example .env
-# Edit .env — set PROCESSING_PATH, OUTPUT_PATH, POSTGRES_PASSWORD, FLASK_SECRET, ADMIN_API_KEY
+# Edit .env — set media paths, POSTGRES_PASSWORD, FLASK_SECRET, ADMIN_API_KEY
 docker compose -f docker-compose.postgres.yml up -d --build
 ```
 
@@ -86,6 +86,19 @@ cp .env.example .env
 # Edit .env — set POSTGRES_HOST to your DB server, plus all other required vars
 docker compose up -d --build
 ```
+
+### Media Paths
+
+Set 4 paths in your `.env` pointing to wherever your media lives — any folder names, any mount points:
+
+```bash
+MOVIES_WATCH_PATH=/path/to/incoming/movies    # Where new movies arrive
+TV_WATCH_PATH=/path/to/incoming/tv            # Where new TV shows arrive
+MOVIES_OUTPUT_PATH=/path/to/library/movies    # Where transcoded movies go
+TV_OUTPUT_PATH=/path/to/library/tv            # Where transcoded TV goes
+```
+
+Movies and TV can live on completely separate drives or NAS mounts. The folders can be named anything.
 
 ### Configure
 
@@ -190,26 +203,26 @@ For each file detected by the watchdog:
 ### File Layout
 
 ```
-/downloads/                    # WATCH_FOLDER (input)
-  movies/
-    Movie Name (2020)/
-      Movie Name (2020).mkv
-  tv/
-    Show Name/
-      Season 01/
-        Show Name - S01E01.mkv
+MOVIES_WATCH_PATH/             # Incoming movies (any path)
+  Movie Name (2020)/
+    Movie Name (2020).mkv
 
-/output/                       # OUTPUT_FOLDER (transcoded)
-  movies/
-    Movie Name (2020)/
-      Movie Name (2020).mp4    # Transcoded with embedded subs
-      poster.jpg
-  tv/
-    Show Name/
-      tvshow.nfo
-      poster.jpg
-      Season 01/
-        Show Name - S01E01.mp4
+TV_WATCH_PATH/                 # Incoming TV (any path)
+  Show Name/
+    Season 01/
+      Show Name - S01E01.mkv
+
+MOVIES_OUTPUT_PATH/            # Transcoded movies
+  Movie Name (2020)/
+    Movie Name (2020).mp4      # Transcoded with embedded subs
+    poster.jpg
+
+TV_OUTPUT_PATH/                # Transcoded TV
+  Show Name/
+    tvshow.nfo
+    poster.jpg
+    Season 01/
+      Show Name - S01E01.mp4
 
 /temp/                         # Temp working files (cleaned automatically)
   movies/

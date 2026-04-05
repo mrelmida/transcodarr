@@ -41,6 +41,15 @@ async def lifespan(app: FastAPI):
     app.state.set_stop_flag_fn = set_stop_flag
     app.state.run_lock_path = "/tmp/transcodarr.run"
 
+    # Validate media paths
+    from transcodarr_core.config import get_media_paths
+    _mpaths = get_media_paths(s)
+    for pname, pval in _mpaths.items():
+        if os.path.isdir(pval):
+            logging.info("[STARTUP] %s = %s OK", pname, pval)
+        else:
+            logging.error("[STARTUP] %s = %s does not exist!", pname, pval)
+
     # Clean up stale temp files
     if s.MEDIA_TEMP_FOLDER:
         try:
@@ -112,7 +121,13 @@ def home(request: Request):
         {
             "request": request,
             "api_base": "/api",
-            "ui_boot": {"watch": s.WATCH_FOLDER, "output": s.OUTPUT_FOLDER},
+            "ui_boot": {
+                "watch": s.WATCH_FOLDER, "output": s.OUTPUT_FOLDER,
+                "movies_watch": s.MOVIES_WATCH_LABEL or s.MOVIES_WATCH_PATH,
+                "tv_watch": s.TV_WATCH_LABEL or s.TV_WATCH_PATH,
+                "movies_output": s.MOVIES_OUTPUT_LABEL or s.MOVIES_OUTPUT_PATH,
+                "tv_output": s.TV_OUTPUT_LABEL or s.TV_OUTPUT_PATH,
+            },
         },
     )
 

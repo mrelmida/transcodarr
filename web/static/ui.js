@@ -12,8 +12,7 @@
 
   // Boot values
   if (window.UI_BOOT) {
-    $("#watch-folder").textContent  = window.UI_BOOT.watch  || "";
-    $("#output-folder").textContent = window.UI_BOOT.output || "";
+    // Path info moved to Settings > General > Paths
   }
 
   // ----- View & Tabs -----
@@ -80,8 +79,7 @@
       const d = r.ok ? await r.json() : {};
       const running = (d.status || d.running) === "running" || d.running === true;
       setRunningUI(running);
-      if (d.watch_folder)  $("#watch-folder").textContent  = d.watch_folder;
-      if (d.output_folder) $("#output-folder").textContent = d.output_folder;
+      // Path display handled in Settings > General > Paths
     } catch {
       setRunningUI(false);
     }

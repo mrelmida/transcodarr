@@ -36,7 +36,9 @@ def api_media_movies(
 ):
     """Return cached movies instantly, trigger background refresh if needed."""
     s = request.app.state.settings
-    root = Path(s.OUTPUT_FOLDER) / "movies"
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(s)
+    root = Path(_mp["movies_output"])
     watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
     temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
 
@@ -87,7 +89,9 @@ def api_media_tv(
 ):
     """Return cached TV instantly, trigger background refresh if needed."""
     s = request.app.state.settings
-    root = Path(s.OUTPUT_FOLDER) / "tv"
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(s)
+    root = Path(_mp["tv_output"])
     watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
     temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
 
@@ -229,8 +233,10 @@ def api_media_tv_debug(request: Request):
         debug_info["error"] = "WATCH_FOLDER not configured"
         return debug_info
 
-    tv_root_direct = watch_root / "tv"
-    tv_root_processing = watch_root / "_processing" / "tv"
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(s)
+    tv_root_direct = Path(_mp["tv_watch"])
+    tv_root_processing = watch_root / "_processing" / tv_root_direct.name
 
     debug_info["paths_checked"] = [
         {"path": str(tv_root_direct), "exists": tv_root_direct.exists()},

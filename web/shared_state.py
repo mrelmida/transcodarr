@@ -222,12 +222,12 @@ SETTINGS_SCHEMA = {
         "fields": {
             "RADARR_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:7878"},
             "RADARR_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
-            "RADARR_PATH_FROM": {"label": "Path From", "type": "text", "placeholder": "/downloads/movies"},
-            "RADARR_PATH_TO": {"label": "Path To", "type": "text", "placeholder": "/movies"},
+            "RADARR_PATH_FROM": {"label": "Path From (Radarr sees)", "type": "text", "placeholder": "/data/media/movies", "hint": "Path prefix as Radarr sees it"},
+            "RADARR_PATH_TO": {"label": "Path To (Transcodarr sees)", "type": "text", "placeholder": "/downloads/movies", "hint": "Matching path inside Transcodarr container"},
             "SONARR_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:8989"},
             "SONARR_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
-            "SONARR_PATH_FROM": {"label": "Path From", "type": "text", "placeholder": "/downloads/tv"},
-            "SONARR_PATH_TO": {"label": "Path To", "type": "text", "placeholder": "/tv"},
+            "SONARR_PATH_FROM": {"label": "Path From (Sonarr sees)", "type": "text", "placeholder": "/data/media/tv", "hint": "Path prefix as Sonarr sees it"},
+            "SONARR_PATH_TO": {"label": "Path To (Transcodarr sees)", "type": "text", "placeholder": "/downloads/tv", "hint": "Matching path inside Transcodarr container"},
             "JELLYFIN_URL": {"label": "URL", "type": "text", "placeholder": "http://localhost:8096"},
             "JELLYFIN_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
             "TVDB_API_KEY": {"label": "API Key", "type": "password", "placeholder": ""},
@@ -254,9 +254,11 @@ SETTINGS_SCHEMA = {
         "label": "General",
         "type": "general_grouped",
         "fields": {
-            "WATCH_FOLDER": {"label": "Watch Folder", "type": "text", "placeholder": "/downloads", "readonly": True, "group": "paths"},
-            "OUTPUT_FOLDER": {"label": "Output Folder", "type": "text", "placeholder": "/output", "readonly": True, "group": "paths"},
-            "MEDIA_TEMP_FOLDER": {"label": "Temp Folder", "type": "text", "placeholder": "/temp", "readonly": True, "group": "paths"},
+            "MOVIES_WATCH_LABEL": {"label": "Movies Watch Path", "type": "text", "placeholder": "/watch/movies", "readonly": True, "group": "paths"},
+            "TV_WATCH_LABEL": {"label": "TV Watch Path", "type": "text", "placeholder": "/watch/tv", "readonly": True, "group": "paths"},
+            "MOVIES_OUTPUT_LABEL": {"label": "Movies Output Path", "type": "text", "placeholder": "/output/movies", "readonly": True, "group": "paths"},
+            "TV_OUTPUT_LABEL": {"label": "TV Output Path", "type": "text", "placeholder": "/output/tv", "readonly": True, "group": "paths"},
+            "MEDIA_TEMP_LABEL": {"label": "Temp Folder", "type": "text", "placeholder": "/temp", "readonly": True, "group": "paths"},
             "POSTGRES_HOST": {"label": "PostgreSQL Host", "type": "text", "placeholder": "localhost", "readonly": True, "group": "database"},
             "POSTGRES_PORT": {"label": "PostgreSQL Port", "type": "text", "placeholder": "5432", "readonly": True, "group": "database"},
             "POSTGRES_DB": {"label": "Database Name", "type": "text", "placeholder": "transcodarr", "readonly": True, "group": "database"},
@@ -281,7 +283,7 @@ SETTINGS_SCHEMA = {
         },
         "groups": {
             "advanced": {"label": "Advanced", "hint": ""},
-            "paths":    {"label": "Paths",    "hint": "Set via environment variables or docker-compose. Restart required to change."},
+            "paths":    {"label": "Media Paths", "hint": "Set via docker-compose volume mounts. Restart required to change."},
             "database": {"label": "Database", "hint": "Set via environment variables or docker-compose. Restart required to change."},
         }
     },
@@ -684,8 +686,10 @@ def get_worker_pool_processing_paths() -> dict:
 # ----------------------- scan functions -----------------------
 def scan_pending_movies(watch_root: Path, temp_root: Path | None) -> list[dict]:
     """Scan watch folder for movies waiting to be processed."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths()
     items: list[dict] = []
-    movies_root = watch_root / "movies"
+    movies_root = Path(_mp["movies_watch"])
     if not movies_root.exists():
         movies_root = watch_root / "_processing" / "movies"
     if not movies_root.exists():
@@ -695,7 +699,7 @@ def scan_pending_movies(watch_root: Path, temp_root: Path | None) -> list[dict]:
 
     processing_stems = set()
     if temp_root and temp_root.exists():
-        for search_path in [temp_root / "movies", temp_root / "_processing" / "movies"]:
+        for search_path in [temp_root / movies_root.name, temp_root / "_processing" / movies_root.name]:
             if search_path.exists():
                 for p in search_path.rglob("*.tmp.mp4"):
                     processing_stems.add(p.stem.replace(".tmp", ""))
@@ -789,12 +793,14 @@ def scan_pending_tv(watch_root: Path, temp_root: Path | None) -> list[dict]:
     """Scan watch folder for TV episodes waiting to be processed."""
     logger = logging.getLogger("transcodarr.api")
 
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths()
     items: list[dict] = []
-    tv_root = watch_root / "tv"
+    tv_root = Path(_mp["tv_watch"])
     if not tv_root.exists():
         tv_root = watch_root / "_processing" / "tv"
     if not tv_root.exists():
-        logger.debug(f"[_scan_pending_tv] Neither {watch_root / 'tv'} nor {watch_root / '_processing' / 'tv'} exists")
+        logger.debug(f"[_scan_pending_tv] TV watch path {_mp['tv_watch']} does not exist")
         return items
 
     logger.debug(f"[_scan_pending_tv] Scanning tv_root: {tv_root}")
@@ -803,7 +809,7 @@ def scan_pending_tv(watch_root: Path, temp_root: Path | None) -> list[dict]:
 
     processing_stems = set()
     if temp_root and temp_root.exists():
-        for search_path in [temp_root / "tv", temp_root / "_processing" / "tv"]:
+        for search_path in [temp_root / tv_root.name, temp_root / "_processing" / tv_root.name]:
             if search_path.exists():
                 for p in search_path.rglob("*.tmp.mp4"):
                     processing_stems.add(p.stem.replace(".tmp", ""))
@@ -919,10 +925,13 @@ def scan_pending_tv(watch_root: Path, temp_root: Path | None) -> list[dict]:
 
 def scan_processing_movies(temp_root: Path, watch_root: Path | None = None) -> list[dict]:
     """Scan temp folder for in-progress movie transcodes."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths()
+    _movies_name = Path(_mp["movies_watch"]).name
     items: list[dict] = []
-    movies_root = temp_root / "movies"
+    movies_root = temp_root / _movies_name
     if not movies_root.exists():
-        movies_root = temp_root / "_processing" / "movies"
+        movies_root = temp_root / "_processing" / _movies_name
     if not movies_root.exists():
         return items
 
@@ -981,10 +990,13 @@ def scan_processing_movies(temp_root: Path, watch_root: Path | None = None) -> l
 
 def scan_processing_tv(temp_root: Path, watch_root: Path | None = None) -> list[dict]:
     """Scan temp folder for in-progress TV transcodes."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths()
+    _tv_name = Path(_mp["tv_watch"]).name
     items: list[dict] = []
-    tv_root = temp_root / "tv"
+    tv_root = temp_root / _tv_name
     if not tv_root.exists():
-        tv_root = temp_root / "_processing" / "tv"
+        tv_root = temp_root / "_processing" / _tv_name
     if not tv_root.exists():
         return items
 
@@ -1183,7 +1195,7 @@ def scan_movies_incremental(root: Path, existing_cache: dict[str, dict], reencod
                 if item.get("processed_at"):
                     item["processed_at_fmt"] = format_timestamp(item["processed_at"])
                 poster_file = p.parent / "poster.jpg"
-                item["poster"] = f"/api/media/poster/movies/{quote(p.parent.name, safe='')}/poster.jpg" if poster_file.exists() else None
+                item["poster"] = f"/api/media/poster/{quote(str(poster_file.relative_to(root.parent)), safe='/')}" if poster_file.exists() else None
 
                 if reencode_map and path_str in reencode_map:
                     re_info = reencode_map[path_str]
@@ -1279,7 +1291,7 @@ def scan_tv_incremental(root: Path, existing_cache: dict[str, dict], reencode_ma
                     item["processed_at_fmt"] = format_timestamp(item["processed_at"])
                 show_folder = root / show
                 poster_file = show_folder / "poster.jpg"
-                item["poster"] = f"/api/media/poster/tv/{quote(show, safe='')}/poster.jpg" if poster_file.exists() else None
+                item["poster"] = f"/api/media/poster/{quote(str(poster_file.relative_to(root.parent)), safe='/')}" if poster_file.exists() else None
 
                 if reencode_map and path_str in reencode_map:
                     re_info = reencode_map[path_str]

@@ -78,11 +78,15 @@ def start_watchdog(
 
     observer = None
     if HAVE_WATCHDOG:
+        from transcodarr_core.config import get_media_paths
+        _mpaths = get_media_paths(s)
         handler = _MovieHandler(kick)
         observer = Observer()
-        observer.schedule(handler, s.WATCH_FOLDER, recursive=True)
+        for _wpath in [_mpaths["movies_watch"], _mpaths["tv_watch"]]:
+            if os.path.isdir(_wpath):
+                observer.schedule(handler, _wpath, recursive=True)
+                logging.info(f"[Watchdog] Watching: {_wpath} (recursive)")
         observer.start()
-        logging.info(f"[Watchdog] Watching: {s.WATCH_FOLDER} (recursive)")
     else:
         logging.warning("[Watchdog] python-watchdog not installed; falling back to 60s polling.")
         debounce_sec = max(debounce_sec, 60.0)
