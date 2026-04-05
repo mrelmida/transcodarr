@@ -31,12 +31,14 @@ def _dir_of(path_like: str) -> str:
     return str(p if p.is_dir() else p.parent)
 
 def _remap_for_radarr(local_dir: str) -> str:
-    """Translate local path to Radarr's view if settings.RADARR_PATH_FROM/TO are set."""
+    """Translate local (container) path to Radarr's view.
+    PATH_FROM = Radarr's prefix, PATH_TO = Transcodarr's prefix.
+    Reverse the webhook mapping: replace PATH_TO with PATH_FROM."""
     if settings.RADARR_PATH_FROM and settings.RADARR_PATH_TO:
         try:
             local_posix = Path(local_dir).as_posix()
-            if local_posix.startswith(settings.RADARR_PATH_FROM):
-                return local_posix.replace(settings.RADARR_PATH_FROM, settings.RADARR_PATH_TO, 1)
+            if local_posix.startswith(settings.RADARR_PATH_TO):
+                return local_posix.replace(settings.RADARR_PATH_TO, settings.RADARR_PATH_FROM, 1)
         except Exception:
             pass
     return local_dir

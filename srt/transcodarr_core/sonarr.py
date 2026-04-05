@@ -33,14 +33,14 @@ def _dir_of(path_like: str) -> str:
     return str(p if p.is_dir() else p.parent)
 
 def _remap_for_sonarr(local_path: str) -> str:
-    """
-    Translate the container/host path into Sonarr's view if SONARR_PATH_FROM/TO are set.
-    """
+    """Translate local (container) path to Sonarr's view.
+    PATH_FROM = Sonarr's prefix, PATH_TO = Transcodarr's prefix.
+    Reverse the webhook mapping: replace PATH_TO with PATH_FROM."""
     if settings.SONARR_PATH_FROM and settings.SONARR_PATH_TO:
         try:
             posix = Path(local_path).as_posix()
-            if posix.startswith(settings.SONARR_PATH_FROM):
-                return posix.replace(settings.SONARR_PATH_FROM, settings.SONARR_PATH_TO, 1)
+            if posix.startswith(settings.SONARR_PATH_TO):
+                return posix.replace(settings.SONARR_PATH_TO, settings.SONARR_PATH_FROM, 1)
         except Exception:
             pass
     return local_path
