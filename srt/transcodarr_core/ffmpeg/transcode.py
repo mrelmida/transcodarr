@@ -19,6 +19,107 @@ def format_progress_bar(percent, length=30):
 def bytes_to_gb(bytes_val: int | float) -> float:
     return float(bytes_val) / (1024 ** 3)
 
+# ───────────────────── codec dispatch ─────────────────────
+
+_VIDEO_ENCODER = {
+    "h264": "libx264",
+    "h265": "libx265",
+    "hevc": "libx265",
+    "vp9":  "libvpx-vp9",
+    "av1":  "libsvtav1",
+}
+
+_AUDIO_ENCODER = {
+    "aac":  "aac",
+    "ac3":  "ac3",
+    "eac3": "eac3",
+    "flac": "flac",
+    "opus": "libopus",
+}
+
+# SVT-AV1 uses numeric presets (0=slowest/best, 13=fastest). Map our x264-style names.
+_SVTAV1_PRESET_MAP = {
+    "ultrafast": "12", "superfast": "11", "veryfast": "10", "faster": "9",
+    "fast": "8", "medium": "6", "slow": "4", "slower": "3", "veryslow": "2",
+}
+
+# libvpx-vp9 uses -cpu-used (0=slowest, 5=fastest).
+_VP9_CPU_USED_MAP = {
+    "ultrafast": "5", "superfast": "5", "veryfast": "4", "faster": "4",
+    "fast": "3", "medium": "2", "slow": "1", "slower": "0", "veryslow": "0",
+}
+
+
+def _video_encoder_args(codec: str, preset: str, profile: str, crf: str, threads: str) -> list[str]:
+    """Build per-codec video encoder args. Silently drops params that don't apply."""
+    codec = (codec or "h264").lower()
+    encoder = _VIDEO_ENCODER.get(codec, "libx264")
+    args: list[str] = ["-c:v", encoder]
+
+    if codec == "h264":
+        if threads:
+            args += ["-x264-params", f"threads={threads}"]
+        if preset:
+            args += ["-preset", preset]
+        if profile:
+            args += ["-profile:v", profile]
+        if crf:
+            args += ["-crf", crf]
+    elif codec in ("h265", "hevc"):
+        if threads:
+            args += ["-x265-params", f"pools={threads}"]
+        if preset:
+            args += ["-preset", preset]
+        if crf:
+            args += ["-crf", crf]
+    elif codec == "vp9":
+        cpu_used = _VP9_CPU_USED_MAP.get((preset or "fast").lower(), "2")
+        if crf:
+            args += ["-b:v", "0", "-crf", crf]
+        args += ["-cpu-used", cpu_used, "-row-mt", "1"]
+    elif codec == "av1":
+        svt_preset = _SVTAV1_PRESET_MAP.get((preset or "fast").lower(), "8")
+        args += ["-preset", svt_preset]
+        if crf:
+            args += ["-crf", crf, "-b:v", "0"]
+    else:
+        if preset:
+            args += ["-preset", preset]
+        if crf:
+            args += ["-crf", crf]
+
+    return args
+
+
+def _audio_encoder_args(codec: str, bitrate: str, channels: str) -> list[str]:
+    """Build per-codec audio encoder args. FLAC is lossless so bitrate is skipped."""
+    codec = (codec or "aac").lower()
+    encoder = _AUDIO_ENCODER.get(codec, "aac")
+    args: list[str] = ["-c:a", encoder]
+    if channels:
+        args += ["-ac", channels]
+    if codec == "flac":
+        args += ["-compression_level", "5"]
+    elif bitrate:
+        args += ["-b:a", bitrate]
+    return args
+
+
+def _resolve_hdr_action(hdr_mode: str, video_codec: str) -> str:
+    """Return 'tonemap', 'passthrough', or 'none'.
+
+    Auto mode tonemaps only for 8-bit-only codecs (h264) to prevent the
+    classic HDR-on-SDR-pipeline grey-washout bug. For AV1/HEVC/VP9 we keep
+    HDR so the player can render BT.2020+PQ properly.
+    """
+    mode = (hdr_mode or "auto").lower()
+    codec = (video_codec or "h264").lower()
+    if mode == "tonemap":
+        return "tonemap"
+    if mode == "passthrough":
+        return "passthrough"
+    return "tonemap" if codec == "h264" else "passthrough"
+
 def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None,
                      settings_override: dict | None = None) -> list[str]:
     def _get(key, default):
@@ -30,6 +131,8 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     x264_threads = _get("X264_THREADS", "4")
 
     # Read encoding settings (override -> DB -> env -> defaults)
+    video_codec = _get("TARGET_VIDEO_CODEC", "h264")
+    audio_codec = _get("TARGET_AUDIO_CODEC", "aac")
     resolution = _get("TARGET_RESOLUTION", "1920x1080")
     preset = _get("TARGET_PRESET", "fast")
     profile = _get("TARGET_PROFILE", "high")
@@ -37,6 +140,7 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     audio_channels = _get("TARGET_AUDIO_CHANNELS", "6")
     crf = _get("TARGET_CRF", "")
     normalize = _get("TARGET_AUDIO_NORMALIZE", "true")
+    hdr_mode = _get("TARGET_HDR_MODE", "auto")
     video_mode = _get("VIDEO_STREAM_MODE", "encode")
     audio_mode = _get("AUDIO_STREAM_MODE", "encode")
 
@@ -59,20 +163,16 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
     if video_mode == "copy":
         cmd += ["-c:v", "copy"]
     else:
-        cmd += [
-            "-c:v", "libx264",
-            "-x264-params", f"threads={x264_threads}",
-        ]
-
         # Probe source for HDR metadata and dimensions (single ffprobe call)
         hdr_info = detect_hdr(file_path)
+        hdr_action = _resolve_hdr_action(hdr_mode, video_codec) if hdr_info["is_hdr"] else "none"
 
         # Build composable video filter chain
         vf_filters: list[str] = []
 
         # 1. HDR → SDR tone mapping (must come before scaling)
-        if hdr_info["is_hdr"]:
-            logging.info("[HDR] Applying tone mapping for %s", os.path.basename(file_path))
+        if hdr_action == "tonemap":
+            logging.info("[HDR] Tonemapping HDR→SDR for %s", os.path.basename(file_path))
             vf_filters += [
                 "zscale=t=linear:npl=100",
                 "format=gbrpf32le",
@@ -81,6 +181,9 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
                 "zscale=t=bt709:m=bt709:r=tv",
                 "format=yuv420p",
             ]
+        elif hdr_action == "passthrough":
+            logging.info("[HDR] Passthrough HDR for %s (codec=%s)",
+                         os.path.basename(file_path), video_codec)
 
         # 2. Resolution scaling (aspect-ratio-preserving)
         if resolution and resolution.lower() == "1080p_max":
@@ -95,18 +198,24 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
         if vf_filters:
             cmd += ["-vf", ",".join(vf_filters)]
 
-        # Pixel format: HDR chain already includes format=yuv420p
-        if not hdr_info["is_hdr"]:
+        # Pixel format: tonemap chain already ends with format=yuv420p.
+        # HDR passthrough needs 10-bit. SDR encode gets standard 8-bit yuv420p.
+        if hdr_action == "passthrough":
+            cmd += ["-pix_fmt", "yuv420p10le"]
+        elif hdr_action == "none":
             cmd += ["-pix_fmt", "yuv420p"]
 
-        cmd += [
-            "-profile:v", profile,
-            "-preset", preset,
-        ]
+        cmd += _video_encoder_args(video_codec, preset, profile, crf, x264_threads)
 
-        # CRF: empty = let codec decide, otherwise set explicitly
-        if crf:
-            cmd += ["-crf", crf]
+        # Preserve source color metadata on HDR passthrough so players render correctly.
+        if hdr_action == "passthrough":
+            color_primaries = hdr_info.get("color_primaries") or "bt2020"
+            color_transfer = hdr_info.get("color_transfer") or "smpte2084"
+            cmd += [
+                "-color_primaries", color_primaries,
+                "-color_trc", color_transfer,
+                "-colorspace", "bt2020nc",
+            ]
 
     if audio_mode == "copy":
         cmd += ["-c:a", "copy"]
@@ -114,15 +223,22 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
         # Audio normalization
         if normalize.lower() != "false":
             cmd += ["-af", "loudnorm=I=-14:TP=-1:LRA=11"]
-        cmd += [
-            "-c:a", "aac", "-b:a", audio_bitrate, "-ac", audio_channels,
-        ]
+        cmd += _audio_encoder_args(audio_codec, audio_bitrate, audio_channels)
+    # Decide container-sensitive flags off the actual output extension, not the
+    # user setting — the fallback path writes to a forced .mp4 temp regardless.
+    out_ext = os.path.splitext(out_temp)[1].lower()
     if srt_safe:
-        cmd += ["-c:s", "mov_text", "-metadata:s:s:0", "language=eng"]
+        # mov_text is MP4-only. MKV uses srt natively.
+        sub_codec = "mov_text" if out_ext == ".mp4" else "srt"
+        cmd += ["-c:s", sub_codec, "-metadata:s:s:0", "language=eng"]
     cmd += [
         "-map_metadata", "-1",
         "-map_chapters", "-1",
-        "-movflags", "+faststart",
+    ]
+    # +faststart is MP4-specific (moves moov atom to the front).
+    if out_ext == ".mp4":
+        cmd += ["-movflags", "+faststart"]
+    cmd += [
         "-fflags", "+genpts",
         "-max_muxing_queue_size", "4096",
         "-max_interleave_delta", "0",  # helps with odd interleaving

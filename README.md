@@ -161,6 +161,7 @@ Database (UI settings) > Environment Variables > .env file > Defaults
 | `TARGET_AUDIO_BITRATE` | `448k` | 128k-448k |
 | `TARGET_AUDIO_CHANNELS` | `6` | 2 (stereo), 6 (5.1), 8 (7.1) |
 | `TARGET_AUDIO_NORMALIZE` | `true` | Loudness normalization (loudnorm) |
+| `TARGET_HDR_MODE` | `auto` | HDR handling: `auto` (tonemap for h264, passthrough for av1/h265), `tonemap`, `passthrough` |
 | `REQUIRE_SUBTITLES` | `true` | Skip transcode if no subs found (false = proceed without) |
 | `FFMPEG_THREADS` | `1` | FFmpeg thread count (0 = auto) |
 | `X264_THREADS` | `4` | x264 encoder thread count (0 = auto) |

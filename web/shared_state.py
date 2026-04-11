@@ -196,6 +196,11 @@ SETTINGS_SCHEMA = {
                 {"value": "true", "label": "Enabled"},
                 {"value": "false", "label": "Disabled"},
             ]},
+            "TARGET_HDR_MODE": {"label": "HDR Handling", "type": "select", "group": "video", "options": [
+                {"value": "auto", "label": "Auto (tonemap for 8-bit codecs, passthrough for AV1/HEVC)"},
+                {"value": "tonemap", "label": "Tonemap to SDR (always)"},
+                {"value": "passthrough", "label": "Passthrough HDR (always)"},
+            ]},
             "REQUIRE_SUBTITLES": {"label": "Require Subtitles", "type": "select", "group": "audio", "options": [
                 {"value": "true", "label": "Required (skip if unavailable)"},
                 {"value": "false", "label": "Optional (transcode without if unavailable)"},

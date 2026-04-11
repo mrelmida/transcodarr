@@ -921,6 +921,7 @@ _BASE_PRESET_SETTINGS = {
     "TARGET_AUDIO_CHANNELS": "6",
     "TARGET_CRF": "",
     "TARGET_AUDIO_NORMALIZE": "true",
+    "TARGET_HDR_MODE": "auto",
     "FFMPEG_THREADS": "1",
     "X264_THREADS": "4",
     "REQUIRE_SUBTITLES": "true",
