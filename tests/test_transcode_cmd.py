@@ -94,6 +94,33 @@ def test_video_args_vp9():
     # VP9 CRF mode needs -b:v 0
     assert "-b:v" in args and "0" in args
     assert "-crf" in args and "30" in args
+    # Threads applied
+    idx = args.index("-threads")
+    assert args[idx + 1] == "4"
+
+
+def test_video_args_av1_threads():
+    args = _video_encoder_args("av1", "slow", "", "18", "6")
+    assert "-svtav1-params" in args
+    idx = args.index("-svtav1-params")
+    assert args[idx + 1] == "lp=6"
+
+
+def test_video_args_h265_pools():
+    args = _video_encoder_args("h265", "slow", "", "20", "4")
+    assert "-x265-params" in args
+    idx = args.index("-x265-params")
+    assert args[idx + 1] == "pools=4"
+
+
+def test_video_args_no_threads_when_empty():
+    """Empty threads string should suppress the per-codec threading flag."""
+    av1 = _video_encoder_args("av1", "fast", "", "", "")
+    assert "-svtav1-params" not in av1
+    vp9 = _video_encoder_args("vp9", "fast", "", "", "")
+    assert "-threads" not in vp9
+    h264 = _video_encoder_args("h264", "fast", "", "", "")
+    assert "-x264-params" not in h264
 
 
 def test_video_args_unknown_codec_falls_back_to_libx264():
@@ -276,6 +303,28 @@ def test_build_sdr_source_no_tonemap_regardless_of_mode():
     if "-vf" in cmd:
         vf_idx = cmd.index("-vf")
         assert "tonemap" not in cmd[vf_idx + 1]
+
+
+def test_build_prefers_encoder_threads_over_legacy_key():
+    """New ENCODER_THREADS wins when both are present."""
+    cmd = _build({
+        "TARGET_VIDEO_CODEC": "av1",
+        "ENCODER_THREADS": "8",
+        "X264_THREADS": "2",
+    })
+    idx = cmd.index("-svtav1-params")
+    assert cmd[idx + 1] == "lp=8"
+
+
+def test_build_falls_back_to_legacy_x264_threads():
+    """Presets stored before the rename still supply thread count via X264_THREADS."""
+    cmd = _build({
+        "TARGET_VIDEO_CODEC": "av1",
+        "X264_THREADS": "2",
+        # ENCODER_THREADS deliberately absent
+    })
+    idx = cmd.index("-svtav1-params")
+    assert cmd[idx + 1] == "lp=2"
 
 
 def test_build_copy_video_still_works():

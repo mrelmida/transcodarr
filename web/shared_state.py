@@ -212,7 +212,7 @@ SETTINGS_SCHEMA = {
                 {"value": "8", "label": "8"},
                 {"value": "0", "label": "Auto (all cores)"},
             ]},
-            "X264_THREADS": {"label": "x264 Threads", "type": "select", "group": "advanced", "options": [
+            "ENCODER_THREADS": {"label": "Encoder Threads", "type": "select", "group": "advanced", "options": [
                 {"value": "1", "label": "1"},
                 {"value": "2", "label": "2"},
                 {"value": "4", "label": "4"},

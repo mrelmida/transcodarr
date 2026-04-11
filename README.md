@@ -164,7 +164,7 @@ Database (UI settings) > Environment Variables > .env file > Defaults
 | `TARGET_HDR_MODE` | `auto` | HDR handling: `auto` (tonemap for h264, passthrough for av1/h265), `tonemap`, `passthrough` |
 | `REQUIRE_SUBTITLES` | `true` | Skip transcode if no subs found (false = proceed without) |
 | `FFMPEG_THREADS` | `1` | FFmpeg thread count (0 = auto) |
-| `X264_THREADS` | `4` | x264 encoder thread count (0 = auto) |
+| `ENCODER_THREADS` | `4` | Video encoder thread count — applies to h264/h265/vp9/av1 (0 = auto) |
 
 ### Auto Preset Rules
 

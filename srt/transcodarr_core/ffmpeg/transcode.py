@@ -74,6 +74,8 @@ def _video_encoder_args(codec: str, preset: str, profile: str, crf: str, threads
             args += ["-crf", crf]
     elif codec == "vp9":
         cpu_used = _VP9_CPU_USED_MAP.get((preset or "fast").lower(), "2")
+        if threads:
+            args += ["-threads", threads]
         if crf:
             args += ["-b:v", "0", "-crf", crf]
         args += ["-cpu-used", cpu_used, "-row-mt", "1"]
@@ -82,6 +84,8 @@ def _video_encoder_args(codec: str, preset: str, profile: str, crf: str, threads
         args += ["-preset", svt_preset]
         if crf:
             args += ["-crf", crf, "-b:v", "0"]
+        if threads:
+            args += ["-svtav1-params", f"lp={threads}"]
     else:
         if preset:
             args += ["-preset", preset]
@@ -128,7 +132,16 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
         return get_setting(key, default)
 
     ffmpeg_threads = _get("FFMPEG_THREADS", "1")
-    x264_threads = _get("X264_THREADS", "4")
+    # ENCODER_THREADS supersedes the legacy X264_THREADS. For override dicts
+    # we check the new key first and only fall back if it's missing, so an
+    # unmigrated preset JSON still supplies a thread count.
+    override = settings_override or {}
+    if "ENCODER_THREADS" in override:
+        encoder_threads = override["ENCODER_THREADS"]
+    elif "X264_THREADS" in override:
+        encoder_threads = override["X264_THREADS"]
+    else:
+        encoder_threads = get_setting("ENCODER_THREADS", "4")
 
     # Read encoding settings (override -> DB -> env -> defaults)
     video_codec = _get("TARGET_VIDEO_CODEC", "h264")
@@ -205,7 +218,7 @@ def build_ffmpeg_cmd(file_path: str, srt_path: str, out_temp: str, settings=None
         elif hdr_action == "none":
             cmd += ["-pix_fmt", "yuv420p"]
 
-        cmd += _video_encoder_args(video_codec, preset, profile, crf, x264_threads)
+        cmd += _video_encoder_args(video_codec, preset, profile, crf, encoder_threads)
 
         # Preserve source color metadata on HDR passthrough so players render correctly.
         if hdr_action == "passthrough":

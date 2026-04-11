@@ -276,6 +276,26 @@ def _run_migrations(conn):
         logging.info("[DATABASE] Migration: Seeding Auto preset...")
         _seed_auto_preset(cursor)
 
+    # Migration: Rename X264_THREADS → ENCODER_THREADS (threads now apply to all codecs).
+    # Idempotent: only runs if the old row exists and the new one doesn't.
+    cursor.execute("""
+        INSERT INTO settings (key, value)
+        SELECT 'ENCODER_THREADS', value FROM settings WHERE key = 'X264_THREADS'
+        ON CONFLICT (key) DO NOTHING
+    """)
+    if cursor.rowcount:
+        logging.info("[DATABASE] Migration: Copied X264_THREADS → ENCODER_THREADS")
+    # Rewrite the same key inside each preset's settings JSON. PostgreSQL JSONB
+    # functions handle this cleanly; only touch rows that actually need it.
+    cursor.execute("""
+        UPDATE encoding_presets
+        SET settings = (settings - 'X264_THREADS')
+                       || jsonb_build_object('ENCODER_THREADS', settings->'X264_THREADS')
+        WHERE settings ? 'X264_THREADS' AND NOT (settings ? 'ENCODER_THREADS')
+    """)
+    if cursor.rowcount:
+        logging.info("[DATABASE] Migration: Renamed X264_THREADS in %d preset(s)", cursor.rowcount)
+
     cursor.close()
     conn.commit()
 
@@ -923,7 +943,7 @@ _BASE_PRESET_SETTINGS = {
     "TARGET_AUDIO_NORMALIZE": "true",
     "TARGET_HDR_MODE": "auto",
     "FFMPEG_THREADS": "1",
-    "X264_THREADS": "4",
+    "ENCODER_THREADS": "4",
     "REQUIRE_SUBTITLES": "true",
 }
 
