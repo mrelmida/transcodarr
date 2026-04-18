@@ -5,6 +5,7 @@ download a poster.  Used by both single-item and bulk-enrich API endpoints.
 """
 from __future__ import annotations
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any
 
@@ -17,7 +18,7 @@ from .posters import ensure_poster
 def enrich_media(video_path: str) -> Dict[str, Any]:
     """
     Enrich a single media file:
-      1. Load sidecar .meta.json
+      1. Load sidecar .meta.json (or build one from Radarr/Sonarr by path)
       2. Fetch metadata from Radarr/Sonarr (fills cache)
       3. Fetch per-episode plot from Sonarr for TV episodes
       4. Write .nfo next to the video (with plot)
@@ -33,8 +34,33 @@ def enrich_media(video_path: str) -> Dict[str, Any]:
         logging.warning("[ENRICH] File not found: %s", video_path)
         return result
 
-    # --- 1. Load sidecar meta ---
+    # --- 1. Load sidecar meta (build one via Radarr/Sonarr path lookup if missing) ---
     meta = load_unified_meta(video_path)
+    temp_meta_path: str | None = None
+    if not meta:
+        from .config import Settings
+        from .pipeline import build_meta_json_from_arr
+        built = build_meta_json_from_arr(video_path, Settings(), str(p.parent))
+        if built:
+            temp_meta_path = built
+            logging.info("[ENRICH] Built sidecar from Radarr/Sonarr path lookup: %s", built)
+            meta = load_unified_meta(video_path)
+        else:
+            logging.info("[ENRICH] No sidecar and no Radarr/Sonarr match for: %s", video_path)
+
+    try:
+        return _do_enrich(video_path, p, meta, result)
+    finally:
+        # .meta.json is transient; .nfo is the final artifact.
+        if temp_meta_path and os.path.exists(temp_meta_path):
+            try:
+                os.remove(temp_meta_path)
+                logging.debug("[ENRICH] Removed transient sidecar: %s", temp_meta_path)
+            except Exception as e:
+                logging.debug("[ENRICH] Failed to remove transient sidecar %s: %s", temp_meta_path, e)
+
+
+def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
     kind = meta.get("kind", "movie")
 
     # --- 2. Fetch rich metadata from Radarr / Sonarr ---

@@ -292,7 +292,7 @@ def _fetch_sonarr_episodes(series_id: int, settings: Settings) -> list:
         return []
 
 
-def _build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str) -> str | None:
+def build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str) -> str | None:
     """
     Query Radarr/Sonarr APIs to build a full .meta.json (same structure as
     write_meta.sh / write_meta_tv.sh) and write it to dest_dir.
@@ -601,7 +601,7 @@ def transcode_file(file_path: str, settings: Settings):
             # Step 3: If meta is still empty, build full .meta.json from Radarr/Sonarr
             if not meta:
                 logging.info("[RE-ENCODE] No NFO metadata found, building .meta.json from Radarr/Sonarr...")
-                arr_meta_path = _build_meta_json_from_arr(file_path, s, temp_dir)
+                arr_meta_path = build_meta_json_from_arr(file_path, s, temp_dir)
                 if arr_meta_path:
                     logging.info("[RE-ENCODE] Built .meta.json in temp: %s", arr_meta_path)
                     meta = load_unified_meta(temp_source) or {}
