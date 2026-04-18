@@ -306,10 +306,6 @@ def write_nfo_from_meta(meta_path: str, out_video_path: str, *, episode_plot: st
             if s_tvdb and s_tvdb != ep_tvdb: _uniq(root, "tvdb:series", str(s_tvdb))
             if s_tmdb and s_tmdb != ep_tmdb: _uniq(root, "tmdb:series", str(s_tmdb))
 
-            for g in (series.get("genres") or meta.get("genres") or []):
-                if isinstance(g, str) and g.strip():
-                    _text(root, "genre", g.strip())
-
         elif kind == "movie":
             root = ET.Element("movie")
             title = movie.get("title") or meta.get("title")
