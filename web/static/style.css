@@ -331,6 +331,16 @@ body.theme-dark{
 .connections-info{padding:16px;background:var(--bg-hover);border-radius:var(--radius);font-size:13px;color:var(--text-muted)}
 .connections-info p{margin:0 0 8px 0}
 .connections-info p:last-child{margin:0}
+.connection-extras{margin-top:4px;padding-top:12px;border-top:1px solid var(--border)}
+.connection-extras-label{display:block;font-size:12px;font-weight:500;color:var(--text);margin-bottom:6px}
+.connection-extras-row{display:flex;gap:6px;align-items:center}
+.connection-extras-input{
+  flex:1;min-width:0;padding:6px 10px;border:1px solid var(--border);
+  border-radius:var(--radius);background:var(--bg);color:var(--text);
+  font-family:monospace;font-size:12px;
+}
+.connection-extras-input:disabled{opacity:.6}
+.connection-extras-row .btn{padding:6px 10px;font-size:12px;white-space:nowrap}
 
 /* Integration Cards */
 .integration-cards{

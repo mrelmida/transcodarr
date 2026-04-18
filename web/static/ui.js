@@ -1910,6 +1910,7 @@ async function loadTV(forceRefresh = false){
         </div>
         <div class="integration-modal-fields"></div>
         ${card.has_webhook ? '<div class="integration-modal-webhook"></div>' : ''}
+        ${["radarr","sonarr"].includes(cardKey) ? '<div class="integration-modal-extras"></div>' : ''}
         <div class="integration-modal-footer">
           <button class="btn btn-ghost modal-close-btn">Close</button>
         </div>
@@ -1983,6 +1984,27 @@ async function loadTV(forceRefresh = false){
             alert(r.ok ? `${cardKey} test successful!` : `Test failed: ${d.error || "Unknown error"}`);
           } catch (e) { alert(`Test failed: ${e.message}`); }
           finally { btn.disabled = false; btn.textContent = "Test"; }
+        });
+      });
+    }
+
+    // Extra file extensions (Radarr/Sonarr only)
+    if (["radarr","sonarr"].includes(cardKey)) {
+      const extrasContainer = modal.querySelector(".integration-modal-extras");
+      const conn = _integrationsConnData ? _integrationsConnData[cardKey] : null;
+      extrasContainer.innerHTML = `
+        <h4 class="integration-webhook-title">Preserved File Extensions</h4>
+        ${renderExtraExtensionsBlock(cardKey, conn || {configured: true})}
+      `;
+      const cardEl = extrasContainer.querySelector("[data-ext-service]");
+      if (cardEl) loadExtraExtensions(cardKey, cardEl);
+      extrasContainer.querySelectorAll(".btn-ext-apply").forEach(btn => {
+        btn.addEventListener("click", () => applyExtraExtensions(btn.dataset.service));
+      });
+      extrasContainer.querySelectorAll(".btn-ext-recommended").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const input = extrasContainer.querySelector(`#ext-input-${btn.dataset.service}`);
+          if (input) input.value = input.dataset.recommended || ".srt,.nfo,.jpg";
         });
       });
     }
@@ -2574,6 +2596,7 @@ async function loadTV(forceRefresh = false){
             <div class="connection-actions">
               ${renderConnectionActions("radarr", data.radarr)}
             </div>
+            ${renderExtraExtensionsBlock("radarr", data.radarr)}
           </div>
 
           <div class="connection-card" id="conn-sonarr">
@@ -2587,6 +2610,7 @@ async function loadTV(forceRefresh = false){
             <div class="connection-actions">
               ${renderConnectionActions("sonarr", data.sonarr)}
             </div>
+            ${renderExtraExtensionsBlock("sonarr", data.sonarr)}
           </div>
         </div>
 
@@ -2605,6 +2629,18 @@ async function loadTV(forceRefresh = false){
       });
       container.querySelectorAll(".btn-test").forEach(btn => {
         btn.addEventListener("click", () => testConnection(btn.dataset.service));
+      });
+      container.querySelectorAll("[data-ext-service]").forEach(card => {
+        loadExtraExtensions(card.dataset.extService, card);
+      });
+      container.querySelectorAll(".btn-ext-apply").forEach(btn => {
+        btn.addEventListener("click", () => applyExtraExtensions(btn.dataset.service));
+      });
+      container.querySelectorAll(".btn-ext-recommended").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const input = container.querySelector(`#ext-input-${btn.dataset.service}`);
+          if (input) input.value = input.dataset.recommended || ".srt,.nfo,.jpg";
+        });
       });
 
     } catch (e) {
@@ -2637,6 +2673,72 @@ async function loadTV(forceRefresh = false){
       `;
     }
     return `<button class="btn btn-primary btn-connect" data-service="${service}">Connect</button>`;
+  }
+
+  function renderExtraExtensionsBlock(service, conn) {
+    if (!conn || !conn.configured) return "";
+    return `
+      <div class="connection-extras" data-ext-service="${service}">
+        <label class="connection-extras-label">Preserve file extensions</label>
+        <div class="connection-extras-row">
+          <input type="text" class="connection-extras-input" id="ext-input-${service}"
+                 placeholder="loading..." disabled>
+          <button class="btn btn-ghost btn-ext-recommended" data-service="${service}"
+                  title="Fill with recommended value" disabled>Recommended</button>
+          <button class="btn btn-primary btn-ext-apply" data-service="${service}"
+                  title="Push to ${service}" disabled>Apply</button>
+        </div>
+        <p class="conn-hint" id="ext-hint-${service}">
+          Extensions ${service} treats as managed extras; others get deleted on disk scan.
+        </p>
+      </div>
+    `;
+  }
+
+  async function loadExtraExtensions(service, card) {
+    const input = card.querySelector(`#ext-input-${service}`);
+    const applyBtn = card.querySelector(`.btn-ext-apply[data-service="${service}"]`);
+    const recBtn = card.querySelector(`.btn-ext-recommended[data-service="${service}"]`);
+    try {
+      const r = await fetch(`${API}/connections/${service}/extra-extensions`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Load failed");
+      input.value = data.extraFileExtensions || "";
+      input.dataset.recommended = data.recommended || ".srt,.nfo,.jpg";
+      input.placeholder = data.recommended || ".srt,.nfo,.jpg";
+      input.disabled = false;
+      applyBtn.disabled = false;
+      recBtn.disabled = false;
+    } catch (e) {
+      input.placeholder = `Error: ${e.message}`;
+    }
+  }
+
+  async function applyExtraExtensions(service) {
+    const input = document.querySelector(`#ext-input-${service}`);
+    const btn = document.querySelector(`.btn-ext-apply[data-service="${service}"]`);
+    const hint = document.querySelector(`#ext-hint-${service}`);
+    if (!input || !btn) return;
+    const value = input.value.trim();
+    btn.disabled = true;
+    const oldText = btn.textContent;
+    btn.textContent = "Applying...";
+    try {
+      const r = await fetch(`${API}/connections/${service}/extra-extensions`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({extraFileExtensions: value}),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      input.value = data.extraFileExtensions || value;
+      if (hint) hint.textContent = `Applied: ${data.extraFileExtensions}`;
+    } catch (e) {
+      alert(`Failed to apply: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldText;
+    }
   }
 
   async function connectService(service) {

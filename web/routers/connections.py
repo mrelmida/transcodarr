@@ -1,5 +1,5 @@
 # web/routers/connections.py
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 import os, logging
 import requests as http_requests
@@ -352,6 +352,84 @@ def api_test_radarr(request: Request):
         else:
             return JSONResponse({"error": f"Test failed: {resp.text}"}, status_code=500)
 
+    except http_requests.exceptions.RequestException as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+_SERVICE_MAP = {
+    "radarr": ("RADARR_URL", "RADARR_API_KEY"),
+    "sonarr": ("SONARR_URL", "SONARR_API_KEY"),
+}
+
+
+def _service_creds(s, service: str):
+    if service not in _SERVICE_MAP:
+        return None, None
+    url = getattr(s, _SERVICE_MAP[service][0], "") or ""
+    key = getattr(s, _SERVICE_MAP[service][1], "") or ""
+    return url.rstrip("/"), key
+
+
+@router.get("/connections/{service}/extra-extensions")
+def api_get_extra_extensions(service: str, request: Request):
+    """Return the current extraFileExtensions value from Radarr/Sonarr."""
+    url, key = _service_creds(request.app.state.settings, service)
+    if not url or not key:
+        return JSONResponse({"error": f"{service} URL and API key not configured"}, status_code=400)
+    try:
+        resp = http_requests.get(
+            f"{url}/api/v3/config/mediamanagement",
+            headers={"X-Api-Key": key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        cfg = resp.json()
+        return {
+            "extraFileExtensions": cfg.get("extraFileExtensions", ""),
+            "importExtraFiles": cfg.get("importExtraFiles", False),
+            "recommended": ".srt,.nfo,.jpg",
+        }
+    except http_requests.exceptions.RequestException as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/connections/{service}/extra-extensions")
+def api_set_extra_extensions(service: str, request: Request, body: dict = Body(default={})):
+    """Update extraFileExtensions on Radarr/Sonarr. Pass {"extraFileExtensions": ".srt,.nfo,.jpg"}."""
+    value = (body or {}).get("extraFileExtensions")
+    if value is None or not isinstance(value, str):
+        return JSONResponse({"error": "extraFileExtensions (string) required"}, status_code=400)
+
+    url, key = _service_creds(request.app.state.settings, service)
+    if not url or not key:
+        return JSONResponse({"error": f"{service} URL and API key not configured"}, status_code=400)
+
+    try:
+        resp = http_requests.get(
+            f"{url}/api/v3/config/mediamanagement",
+            headers={"X-Api-Key": key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        cfg = resp.json()
+        cfg["extraFileExtensions"] = value.strip()
+        if not cfg.get("importExtraFiles"):
+            cfg["importExtraFiles"] = True
+
+        resp = http_requests.put(
+            f"{url}/api/v3/config/mediamanagement",
+            headers={"X-Api-Key": key},
+            json=cfg,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        updated = resp.json()
+        logging.info("[CONNECTIONS] Updated %s extraFileExtensions to %r", service, updated.get("extraFileExtensions"))
+        return {
+            "ok": True,
+            "extraFileExtensions": updated.get("extraFileExtensions"),
+            "importExtraFiles": updated.get("importExtraFiles"),
+        }
     except http_requests.exceptions.RequestException as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
