@@ -280,7 +280,7 @@ async function handleEnrichClick(item, type) {
     const r = await fetch(`${API}/media/enrich`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ path: item.path })
+      body: JSON.stringify({ path: item.path, force: true })
     });
     const result = await r.json();
     if (r.ok) {
@@ -1316,7 +1316,7 @@ async function handleBulkEnrich(type) {
       const r = await fetch(`${API}/media/enrich`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ path: item.path })
+        body: JSON.stringify({ path: item.path, force: true })
       });
       const result = await r.json();
       if (result.nfo_written) nfos++;
@@ -1339,6 +1339,7 @@ async function handleEnrichAll() {
     const r = await fetch(`${API}/media/enrich-all`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ force: true }),
     });
     const result = await r.json();
     if (!r.ok) {
