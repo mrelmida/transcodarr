@@ -114,6 +114,16 @@ app.include_router(webhooks.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
 
 
+_static_dir = _web_dir / "static"
+
+
+def _asset_version(name: str) -> str:
+    try:
+        return str(int((_static_dir / name).stat().st_mtime))
+    except Exception:
+        return "0"
+
+
 # ── UI route ──
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -123,6 +133,8 @@ def home(request: Request):
         {
             "request": request,
             "api_base": "/api",
+            "css_version": _asset_version("style.css"),
+            "js_version": _asset_version("ui.js"),
             "ui_boot": {
                 "watch": s.WATCH_FOLDER, "output": s.OUTPUT_FOLDER,
                 "movies_watch": s.MOVIES_WATCH_LABEL or s.MOVIES_WATCH_PATH,

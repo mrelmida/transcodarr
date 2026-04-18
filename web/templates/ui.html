@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Transcodarr</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="/static/style.css?v=49" />
+  <link rel="stylesheet" href="/static/style.css?v={{ css_version }}" />
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2" />
 </head>
 <body class="theme-dark">
@@ -283,6 +283,6 @@
     window.API_BASE = "{{ api_base | default('/api') }}";
     window.UI_BOOT  = {{ (ui_boot or {}) | tojson }};
   </script>
-  <script src="/static/ui.js?v=48"></script>
+  <script src="/static/ui.js?v={{ js_version }}"></script>
 </body>
 </html>
