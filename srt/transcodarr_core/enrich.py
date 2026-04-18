@@ -15,7 +15,7 @@ from .nfo import find_nfo_for_video, write_nfo_from_meta, write_tvshow_nfo_if_mi
 from .posters import ensure_poster
 
 
-def enrich_media(video_path: str) -> Dict[str, Any]:
+def enrich_media(video_path: str, *, force: bool = False) -> Dict[str, Any]:
     """
     Enrich a single media file:
       1. Load sidecar .meta.json (or build one from Radarr/Sonarr by path)
@@ -23,6 +23,8 @@ def enrich_media(video_path: str) -> Dict[str, Any]:
       3. Fetch per-episode plot from Sonarr for TV episodes
       4. Write .nfo next to the video (with plot)
       5. Download poster into the media folder
+
+    When force=True, existing .nfo and tvshow.nfo are rewritten.
 
     Returns dict with keys: nfo_written (bool), poster_downloaded (bool),
     plus any extra info for the caller.
@@ -49,7 +51,7 @@ def enrich_media(video_path: str) -> Dict[str, Any]:
             logging.info("[ENRICH] No sidecar and no Radarr/Sonarr match for: %s", video_path)
 
     try:
-        return _do_enrich(video_path, p, meta, result)
+        return _do_enrich(video_path, p, meta, result, force=force)
     finally:
         # .meta.json is transient; .nfo is the final artifact.
         if temp_meta_path and os.path.exists(temp_meta_path):
@@ -60,7 +62,7 @@ def enrich_media(video_path: str) -> Dict[str, Any]:
                 logging.debug("[ENRICH] Failed to remove transient sidecar %s: %s", temp_meta_path, e)
 
 
-def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str, Any], *, force: bool = False) -> Dict[str, Any]:
     kind = meta.get("kind", "movie")
 
     # --- 2. Fetch rich metadata from Radarr / Sonarr ---
@@ -115,7 +117,8 @@ def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str,
 
     # --- 4. Write NFO ---
     meta_json_path = find_meta_json(video_path)
-    if meta_json_path and not find_nfo_for_video(video_path):
+    existing_nfo = find_nfo_for_video(video_path)
+    if meta_json_path and (force or not existing_nfo):
         nfo_path = write_nfo_from_meta(
             str(meta_json_path), video_path,
             episode_plot=episode_plot,
@@ -128,6 +131,14 @@ def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str,
         # For TV episodes, also ensure tvshow.nfo in the series directory
         if kind == "episode":
             series_dir = p.parent.parent  # typically Season X -> Series root
+            if force:
+                # Remove existing tvshow.nfo so _if_missing re-writes with current data
+                tvshow_path = Path(series_dir) / "tvshow.nfo"
+                if tvshow_path.exists():
+                    try:
+                        tvshow_path.unlink()
+                    except Exception as e:
+                        logging.debug("[ENRICH] Could not remove %s: %s", tvshow_path, e)
             write_tvshow_nfo_if_missing(
                 str(series_dir),
                 title=meta.get("series_title"),

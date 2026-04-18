@@ -520,14 +520,19 @@ def api_check_ignored(file_path: str = Query(default=None)):
 
 @router.post("/media/enrich")
 def api_enrich_single(data: dict = Body(default={})):
-    """Enrich a single media file with metadata, NFO, and poster."""
+    """Enrich a single media file with metadata, NFO, and poster.
+
+    Pass {"force": true} to rewrite an existing NFO (useful for adding
+    newly-tracked fields like genres to already-enriched items).
+    """
     path = data.get("path")
     if not path:
         return JSONResponse({"error": "path is required"}, status_code=400)
+    force = bool(data.get("force"))
 
     try:
         from transcodarr_core.enrich import enrich_media
-        result = enrich_media(path)
+        result = enrich_media(path, force=force)
         return {"ok": True, **result}
     except Exception as e:
         logging.error("[ENRICH] Failed to enrich %s: %s", path, e)
@@ -535,8 +540,11 @@ def api_enrich_single(data: dict = Body(default={})):
 
 
 @router.post("/media/enrich-all")
-def api_enrich_all():
-    """Start bulk enrichment of all movies/episodes missing NFOs."""
+def api_enrich_all(data: dict = Body(default={})):
+    """Start bulk enrichment. By default only touches files missing an NFO;
+    pass {"force": true} to rewrite NFOs for every video file.
+    """
+    force = bool((data or {}).get("force"))
     if enrich_state["running"]:
         return JSONResponse({"error": "Enrichment already running", "status": enrich_state}, status_code=409)
 
@@ -561,8 +569,9 @@ def api_enrich_all():
                 if not root_p.exists():
                     continue
                 for vp in root_p.rglob("*"):
-                    if vp.is_file() and vp.suffix.lower() in video_exts and not find_nfo_for_video(str(vp)):
-                        to_enrich.append(str(vp))
+                    if vp.is_file() and vp.suffix.lower() in video_exts:
+                        if force or not find_nfo_for_video(str(vp)):
+                            to_enrich.append(str(vp))
 
             enrich_state["total"] = len(to_enrich)
             logging.info("[ENRICH] Starting bulk enrichment: %d files", len(to_enrich))
@@ -573,7 +582,7 @@ def api_enrich_all():
                     break
 
                 try:
-                    result = enrich_media(path)
+                    result = enrich_media(path, force=force)
                     if result.get("nfo_written"):
                         enrich_state["nfo_written"] += 1
                     if result.get("poster_downloaded"):
