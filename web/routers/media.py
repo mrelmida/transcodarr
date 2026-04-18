@@ -551,16 +551,18 @@ def api_enrich_all():
         enrich_state["errors"] = 0
 
         try:
-            movies = get_all_movies()
-            episodes = get_all_tv_episodes()
+            from transcodarr_core.config import Settings, get_media_paths
+            _mp = get_media_paths(Settings())
+            video_exts = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".ts", ".webm"}
 
             to_enrich = []
-            for m in movies:
-                if m.get("path") and not find_nfo_for_video(m["path"]):
-                    to_enrich.append(m["path"])
-            for e in episodes:
-                if e.get("path") and not find_nfo_for_video(e["path"]):
-                    to_enrich.append(e["path"])
+            for root in (_mp["movies_output"], _mp["tv_output"]):
+                root_p = Path(root)
+                if not root_p.exists():
+                    continue
+                for vp in root_p.rglob("*"):
+                    if vp.is_file() and vp.suffix.lower() in video_exts and not find_nfo_for_video(str(vp)):
+                        to_enrich.append(str(vp))
 
             enrich_state["total"] = len(to_enrich)
             logging.info("[ENRICH] Starting bulk enrichment: %d files", len(to_enrich))
