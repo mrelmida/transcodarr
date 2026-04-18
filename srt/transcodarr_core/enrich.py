@@ -133,6 +133,7 @@ def _do_enrich(video_path: str, p: Path, meta: Dict[str, Any], result: Dict[str,
                 title=meta.get("series_title"),
                 imdb_id=meta.get("series_imdb_id"),
                 tvdb_id=int(meta.get("series_tvdb_id")) if meta.get("series_tvdb_id") else None,
+                genres=meta.get("genres") or None,
             )
 
     # --- 5. Download poster ---

@@ -63,6 +63,10 @@ def write_tvshow_nfo(dest_dir: str, series_meta: dict) -> str | None:
     root = ET.Element("tvshow")
     _text(root, "title", title)
 
+    for g in (series_meta or {}).get("genres") or []:
+        if isinstance(g, str) and g.strip():
+            _text(root, "genre", g.strip())
+
     ids = ET.SubElement(root, "ids")
     if imdb_id:
         ET.SubElement(ids, "imdb").text = imdb_id
@@ -79,7 +83,8 @@ def write_tvshow_nfo(dest_dir: str, series_meta: dict) -> str | None:
     return None
 
 def write_tvshow_nfo_if_missing(series_dir: str, *, title: str | None, imdb_id: str | None = None,
-                                tvdb_id: int | None = None, tmdb_id: int | None = None) -> None:
+                                tvdb_id: int | None = None, tmdb_id: int | None = None,
+                                genres: list | None = None) -> None:
     """
     Create tvshow.nfo exactly once (no overwrite). Minimal, precise IDs for Jellyfin.
     """
@@ -93,6 +98,9 @@ def write_tvshow_nfo_if_missing(series_dir: str, *, title: str | None, imdb_id: 
         lines = ["<?xml version='1.0' encoding='utf-8'?>", "<tvshow>"]
         if title:
             lines.append(f"  <title>{_xml_esc(title)}</title>")
+        for g in genres or []:
+            if isinstance(g, str) and g.strip():
+                lines.append(f"  <genre>{_xml_esc(g.strip())}</genre>")
         if imdb_id:
             lines.append(f"  <imdbid>{_xml_esc(imdb_id)}</imdbid>")
         if tvdb_id:
@@ -298,6 +306,10 @@ def write_nfo_from_meta(meta_path: str, out_video_path: str, *, episode_plot: st
             if s_tvdb and s_tvdb != ep_tvdb: _uniq(root, "tvdb:series", str(s_tvdb))
             if s_tmdb and s_tmdb != ep_tmdb: _uniq(root, "tmdb:series", str(s_tmdb))
 
+            for g in (series.get("genres") or meta.get("genres") or []):
+                if isinstance(g, str) and g.strip():
+                    _text(root, "genre", g.strip())
+
         elif kind == "movie":
             root = ET.Element("movie")
             title = movie.get("title") or meta.get("title")
@@ -310,6 +322,9 @@ def write_nfo_from_meta(meta_path: str, out_video_path: str, *, episode_plot: st
             if year: _text(root, "year", year)
             if movie_plot:
                 _text(root, "plot", movie_plot)
+            for g in (movie.get("genres") or meta.get("genres") or []):
+                if isinstance(g, str) and g.strip():
+                    _text(root, "genre", g.strip())
             if imdb: _uniq(root, "imdb", imdb, default=True)
             if tmdb: _uniq(root, "tmdb", str(tmdb))
             if tvdb: _uniq(root, "tvdb", str(tvdb))

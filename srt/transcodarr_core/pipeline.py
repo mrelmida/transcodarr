@@ -320,6 +320,7 @@ def build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str) 
                         "imdb_id": m.get("imdbId"),
                         "tmdb_id": m.get("tmdbId"),
                         "radarr_movie_id": m.get("id"),
+                        "genres": m.get("genres") or [],
                         "movie_path": m.get("path"),
                         "file_path": file_path,
                     }
@@ -335,72 +336,91 @@ def build_meta_json_from_arr(file_path: str, settings: Settings, dest_dir: str) 
             from .sonarr import _get_all_series, _normalize_path as _snorm, _remap_for_sonarr
             remapped = _remap_for_sonarr(file_path)
             normalized = _snorm(remapped)
-            for s in _get_all_series():
+            # Series folder name ("/output/tv/South Park/Season 21/X.mp4" -> "south park")
+            series_folder_name = Path(file_path).parent.parent.name.lower()
+            if Path(file_path).parent.name.lower() == series_folder_name:
+                # Flat layout: no Season subfolder
+                series_folder_name = Path(file_path).parent.name.lower()
+            all_series = _get_all_series()
+            match = None
+            for s in all_series:
                 if normalized.startswith(_snorm(s.get("path", ""))):
-                    series_id = s.get("id")
-                    # Parse season/episodes from filename (handles multi-ep)
-                    season_num, episode_nums = _parse_season_episodes(os.path.basename(file_path))
-                    if not season_num:
-                        # Try folder name
-                        parent_name = Path(file_path).parent.name
-                        season_match = re.search(r"[Ss]eason\s*(\d+)", parent_name)
-                        if season_match:
-                            season_num = int(season_match.group(1))
+                    match = s
+                    break
+            if not match:
+                # Fallback: match by series folder name (handles ongoing series whose
+                # Sonarr path still points at the watch folder after transcode).
+                for s in all_series:
+                    if Path(s.get("path") or "").name.lower() == series_folder_name:
+                        match = s
+                        break
+            if match:
+                s = match
+                series_id = s.get("id")
+                # Parse season/episodes from filename (handles multi-ep)
+                season_num, episode_nums = _parse_season_episodes(os.path.basename(file_path))
+                if not season_num:
+                    # Try folder name
+                    parent_name = Path(file_path).parent.name
+                    season_match = re.search(r"[Ss]eason\s*(\d+)", parent_name)
+                    if season_match:
+                        season_num = int(season_match.group(1))
 
-                    # Fetch per-episode data from Sonarr for titles and IDs
-                    ep_titles = []
-                    ep_imdb_ids = []
-                    ep_tvdb_ids = []
-                    ep_tmdb_ids = []
-                    first_imdb_id = None
+                # Fetch per-episode data from Sonarr for titles and IDs
+                ep_titles = []
+                ep_imdb_ids = []
+                ep_tvdb_ids = []
+                ep_tmdb_ids = []
+                first_imdb_id = None
 
-                    if series_id and season_num and episode_nums:
-                        all_episodes = _fetch_sonarr_episodes(series_id, settings)
-                        ep_by_num = {}
-                        for ep in all_episodes:
-                            if ep.get("seasonNumber") == season_num:
-                                ep_by_num[ep.get("episodeNumber")] = ep
+                if series_id and season_num and episode_nums:
+                    all_episodes = _fetch_sonarr_episodes(series_id, settings)
+                    ep_by_num = {}
+                    for ep in all_episodes:
+                        if ep.get("seasonNumber") == season_num:
+                            ep_by_num[ep.get("episodeNumber")] = ep
 
-                        for ep_num in episode_nums:
-                            ep_data = ep_by_num.get(ep_num, {})
-                            ep_titles.append(ep_data.get("title") or "")
-                            ep_imdb_ids.append(ep_data.get("imdbId") or "")
-                            ep_tvdb_ids.append(ep_data.get("tvdbId") or "")
-                            ep_tmdb_ids.append(ep_data.get("tmdbId") or "")
-                            if not first_imdb_id and ep_data.get("imdbId"):
-                                first_imdb_id = ep_data["imdbId"]
+                    for ep_num in episode_nums:
+                        ep_data = ep_by_num.get(ep_num, {})
+                        ep_titles.append(ep_data.get("title") or "")
+                        ep_imdb_ids.append(ep_data.get("imdbId") or "")
+                        ep_tvdb_ids.append(ep_data.get("tvdbId") or "")
+                        ep_tmdb_ids.append(ep_data.get("tmdbId") or "")
+                        if not first_imdb_id and ep_data.get("imdbId"):
+                            first_imdb_id = ep_data["imdbId"]
 
-                    meta_json = {
-                        "kind": "episode",
-                        "series": {
-                            "title": s.get("title"),
-                            "path": s.get("path"),
-                            "tvdb_id": s.get("tvdbId"),
-                            "imdb_id": s.get("imdbId"),
-                            "sonarr_series_id": series_id,
+                meta_json = {
+                    "kind": "episode",
+                    "series": {
+                        "title": s.get("title"),
+                        "path": s.get("path"),
+                        "tvdb_id": s.get("tvdbId"),
+                        "imdb_id": s.get("imdbId"),
+                        "sonarr_series_id": series_id,
+                        "genres": s.get("genres") or [],
+                    },
+                    "episode": {
+                        "season": season_num,
+                        "episodes": episode_nums,
+                        "titles": ep_titles,
+                        "ids": {
+                            "imdb": [x for x in ep_imdb_ids if x],
+                            "tvdb": [x for x in ep_tvdb_ids if x],
+                            "tmdb": [x for x in ep_tmdb_ids if x],
                         },
-                        "episode": {
-                            "season": season_num,
-                            "episodes": episode_nums,
-                            "titles": ep_titles,
-                            "ids": {
-                                "imdb": [x for x in ep_imdb_ids if x],
-                                "tvdb": [x for x in ep_tvdb_ids if x],
-                                "tmdb": [x for x in ep_tmdb_ids if x],
-                            },
-                            "first_imdb_id": first_imdb_id,
-                        },
-                        "file": {
-                            "path": file_path,
-                        },
-                    }
-                    out_path = os.path.join(dest_dir, base_name + ".meta.json")
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        json.dump(meta_json, f, indent=2)
-                    logging.info("[RE-ENCODE] Built .meta.json from Sonarr: %s S%sE%s (%d eps) imdb=%s -> %s",
-                                 s.get("title"), season_num, episode_nums,
-                                 len(episode_nums), s.get("imdbId"), out_path)
-                    return out_path
+                        "first_imdb_id": first_imdb_id,
+                    },
+                    "file": {
+                        "path": file_path,
+                    },
+                }
+                out_path = os.path.join(dest_dir, base_name + ".meta.json")
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(meta_json, f, indent=2)
+                logging.info("[RE-ENCODE] Built .meta.json from Sonarr: %s S%sE%s (%d eps) imdb=%s -> %s",
+                             s.get("title"), season_num, episode_nums,
+                             len(episode_nums), s.get("imdbId"), out_path)
+                return out_path
             logging.info("[RE-ENCODE] Sonarr lookup: no match for %s", file_path)
 
         else:
@@ -723,6 +743,7 @@ def transcode_file(file_path: str, settings: Settings):
                     title=meta.get("series_title"),
                     imdb_id=meta.get("series_imdb_id"),
                     tvdb_id=meta.get("series_tvdb_id"),
+                    genres=meta.get("genres") or None,
                 )
             # Generate poster if missing
             poster_dir = str(Path(final_path).parent)

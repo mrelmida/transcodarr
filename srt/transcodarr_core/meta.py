@@ -230,6 +230,13 @@ def load_unified_meta(video_path: str) -> Dict[str, Any]:
     out["tmdb_id"] = raw.get("tmdb_id")
     out["radarr_movie_id"] = raw.get("radarr_movie_id")
 
+    # Genres (movie-style flat list or series-style under series.genres)
+    raw_genres = raw.get("genres")
+    if isinstance(raw_genres, list):
+        out["genres"] = [g for g in raw_genres if isinstance(g, str) and g]
+    else:
+        out["genres"] = []
+
     # TV fields
     series = raw.get("series") or {}
     episode = raw.get("episode") or {}
@@ -240,6 +247,9 @@ def load_unified_meta(video_path: str) -> Dict[str, Any]:
         out["series_tvdb_id"] = series.get("tvdb_id")
         out["series_imdb_id"] = _coerce_imdb(series.get("imdb_id"))
         out["sonarr_series_id"] = series.get("sonarr_series_id")
+        series_genres = series.get("genres")
+        if isinstance(series_genres, list) and not out.get("genres"):
+            out["genres"] = [g for g in series_genres if isinstance(g, str) and g]
 
     if episode:
         # season & episode numbers
