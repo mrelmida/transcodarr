@@ -21,3 +21,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+/web/cache/
+/prompt.txt
+/reply.txt
+/Graphana-Skill.md
