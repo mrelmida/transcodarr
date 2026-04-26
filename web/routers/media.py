@@ -15,6 +15,7 @@ from web.shared_state import (
     background_scan, apply_filters, find_video_for_meta, parse_sxe,
     has_sentinel, remove_sentinel, enrich_state,
     bytes_to_gb, format_timestamp,
+    compute_movies_view, compute_tv_view, maybe_trigger_background_scan,
 )
 from transcodarr_core.database import (
     get_all_movies, get_all_tv_episodes,
@@ -36,45 +37,9 @@ def api_media_movies(
 ):
     """Return cached movies instantly, trigger background refresh if needed."""
     s = request.app.state.settings
-    from transcodarr_core.config import get_media_paths
-    _mp = get_media_paths(s)
-    root = Path(_mp["movies_output"])
-    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
-    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
-
-    media_cache = get_media_cache()
-
-    if not media_cache["movies"]["items"]:
-        load_cache("movies")
-
-    items = list(media_cache["movies"]["items"])
-
-    reencode_map = scan_reencode_progress(temp_root) if temp_root else {}
-    if reencode_map:
-        for item in items:
-            re_info = reencode_map.get(item.get("path"))
-            if re_info:
-                item["reencode_progress"] = re_info["progress"]
-                item["reencode_elapsed_fmt"] = re_info.get("elapsed_fmt")
-                item["status"] = "re-encoding"
-
-    if watch_root:
-        pending_items = scan_pending_movies(watch_root, temp_root)
-        items = pending_items + items
-
-    if temp_root:
-        processing_items = scan_processing_movies(temp_root, watch_root)
-        items = processing_items + items
-
-    do_refresh = refresh == "1"
-    cache_age = int(time.time()) - media_cache["movies"]["last_scan"]
-    if do_refresh or not media_cache["movies"]["items"] or cache_age > 60:
-        if not media_cache["movies"]["scanning"]:
-            t = Thread(target=background_scan, args=("movies", root), daemon=True)
-            t.start()
-
+    items, scanning = compute_movies_view(s)
+    maybe_trigger_background_scan(s, "movies", force=(refresh == "1"))
     items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
-    scanning = media_cache["movies"]["scanning"]
     return {"items": items, "count": len(items), "scanning": scanning}
 
 
@@ -89,45 +54,9 @@ def api_media_tv(
 ):
     """Return cached TV instantly, trigger background refresh if needed."""
     s = request.app.state.settings
-    from transcodarr_core.config import get_media_paths
-    _mp = get_media_paths(s)
-    root = Path(_mp["tv_output"])
-    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
-    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
-
-    media_cache = get_media_cache()
-
-    if not media_cache["tv"]["items"]:
-        load_cache("tv")
-
-    items = list(media_cache["tv"]["items"])
-
-    reencode_map = scan_reencode_progress(temp_root) if temp_root else {}
-    if reencode_map:
-        for item in items:
-            re_info = reencode_map.get(item.get("path"))
-            if re_info:
-                item["reencode_progress"] = re_info["progress"]
-                item["reencode_elapsed_fmt"] = re_info.get("elapsed_fmt")
-                item["status"] = "re-encoding"
-
-    if watch_root:
-        pending_items = scan_pending_tv(watch_root, temp_root)
-        items = pending_items + items
-
-    if temp_root:
-        processing_items = scan_processing_tv(temp_root, watch_root)
-        items = processing_items + items
-
-    do_refresh = refresh == "1"
-    cache_age = int(time.time()) - media_cache["tv"]["last_scan"]
-    if do_refresh or not media_cache["tv"]["items"] or cache_age > 60:
-        if not media_cache["tv"]["scanning"]:
-            t = Thread(target=background_scan, args=("tv", root), daemon=True)
-            t.start()
-
+    items, scanning = compute_tv_view(s)
+    maybe_trigger_background_scan(s, "tv", force=(refresh == "1"))
     items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
-    scanning = media_cache["tv"]["scanning"]
     return {"items": items, "count": len(items), "scanning": scanning}
 
 

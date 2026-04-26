@@ -1331,6 +1331,105 @@ def background_scan(media_type: str, root: Path):
         _media_cache[media_type]["scanning"] = False
 
 
+def compute_movies_view(settings) -> tuple[list[dict], bool]:
+    """Compose the movies view (items + scanning) the same way GET /api/media/movies does,
+    but without query filters. Used by both the REST handler and the SSE producer."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(settings)
+    watch_root = Path(settings.WATCH_FOLDER) if settings.WATCH_FOLDER else None
+    temp_root = Path(settings.MEDIA_TEMP_FOLDER) if settings.MEDIA_TEMP_FOLDER else None
+
+    if not _media_cache["movies"]["items"]:
+        load_cache("movies")
+
+    items = list(_media_cache["movies"]["items"])
+
+    reencode_map = scan_reencode_progress(temp_root) if temp_root else {}
+    if reencode_map:
+        for item in items:
+            re_info = reencode_map.get(item.get("path"))
+            if re_info:
+                item["reencode_progress"] = re_info["progress"]
+                item["reencode_elapsed_fmt"] = re_info.get("elapsed_fmt")
+                item["status"] = "re-encoding"
+
+    if watch_root:
+        items = scan_pending_movies(watch_root, temp_root) + items
+    if temp_root:
+        items = scan_processing_movies(temp_root, watch_root) + items
+
+    return items, _media_cache["movies"]["scanning"]
+
+
+def compute_tv_view(settings) -> tuple[list[dict], bool]:
+    """Compose the TV view the same way GET /api/media/tv does, without filters."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(settings)
+    watch_root = Path(settings.WATCH_FOLDER) if settings.WATCH_FOLDER else None
+    temp_root = Path(settings.MEDIA_TEMP_FOLDER) if settings.MEDIA_TEMP_FOLDER else None
+
+    if not _media_cache["tv"]["items"]:
+        load_cache("tv")
+
+    items = list(_media_cache["tv"]["items"])
+
+    reencode_map = scan_reencode_progress(temp_root) if temp_root else {}
+    if reencode_map:
+        for item in items:
+            re_info = reencode_map.get(item.get("path"))
+            if re_info:
+                item["reencode_progress"] = re_info["progress"]
+                item["reencode_elapsed_fmt"] = re_info.get("elapsed_fmt")
+                item["status"] = "re-encoding"
+
+    if watch_root:
+        items = scan_pending_tv(watch_root, temp_root) + items
+    if temp_root:
+        items = scan_processing_tv(temp_root, watch_root) + items
+
+    return items, _media_cache["tv"]["scanning"]
+
+
+def maybe_trigger_background_scan(settings, media_type: str, force: bool = False) -> None:
+    """Kick off a background scan if cache is empty/stale (>60s) or force=True."""
+    from transcodarr_core.config import get_media_paths
+    _mp = get_media_paths(settings)
+    root = Path(_mp["movies_output"] if media_type == "movies" else _mp["tv_output"])
+
+    cache_age = int(time.time()) - _media_cache[media_type]["last_scan"]
+    if force or not _media_cache[media_type]["items"] or cache_age > 60:
+        if not _media_cache[media_type]["scanning"]:
+            t = Thread(target=background_scan, args=(media_type, root), daemon=True)
+            t.start()
+
+
+def read_log_tail(log_path: str, pos: int = 0, inode: str | None = None) -> dict:
+    """Byte-offset tail with rotation detection.
+    Returns {"text", "pos", "inode", "reset"} — same shape as GET /api/logs/tail."""
+    p = Path(log_path)
+    if not p.exists():
+        return {"text": "", "pos": 0, "inode": None, "reset": True}
+
+    st = p.stat()
+    inode_token = f"{st.st_dev}:{st.st_ino}"
+
+    reset = False
+    if inode and inode != inode_token:
+        reset = True
+        pos = 0
+    elif pos > st.st_size:
+        reset = True
+        pos = 0
+
+    with open(p, "rb") as f:
+        f.seek(pos)
+        data = f.read()
+        new_pos = pos + len(data)
+
+    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    return {"text": text, "pos": new_pos, "inode": inode_token, "reset": reset}
+
+
 _SORT_FIELDS = {"mtime", "size_gb", "title", "year"}
 
 

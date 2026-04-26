@@ -7,6 +7,7 @@ import psutil
 
 from web.shared_state import (
     _stats_lock, _stats_timestamps, _cpu_history, _ram_history,
+    read_log_tail,
 )
 from transcodarr_core.database import get_storage_history
 
@@ -65,30 +66,7 @@ def api_logs_tail(
     inode: str = Query(default=None),
 ):
     """Offset-based tail with rotation detection."""
-    log_path = request.app.state.log_path
-    p = Path(log_path)
-
-    if not p.exists():
-        return {"text": "", "pos": 0, "inode": None, "reset": True}
-
-    st = p.stat()
-    inode_token = f"{st.st_dev}:{st.st_ino}"
-
-    reset = False
-    if inode and inode != inode_token:
-        reset = True
-        pos = 0
-    elif pos > st.st_size:
-        reset = True
-        pos = 0
-
-    with open(p, "rb") as f:
-        f.seek(pos)
-        data = f.read()
-        new_pos = pos + len(data)
-
-    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
-    return {"text": text, "pos": new_pos, "inode": inode_token, "reset": reset}
+    return read_log_tail(request.app.state.log_path, pos=pos, inode=inode)
 
 
 @router.get("/debug/logging")
