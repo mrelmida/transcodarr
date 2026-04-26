@@ -20,7 +20,7 @@ from env_flag import get_stop_flag, set_stop_flag
 from web.shared_state import start_stats_collector
 from web.routers import (
     control, settings, media, transcode, workers,
-    subtitles, connections, webhooks, system,
+    subtitles, connections, webhooks, system, events,
 )
 
 
@@ -112,6 +112,7 @@ app.include_router(subtitles.router, prefix="/api")
 app.include_router(connections.router, prefix="/api")
 app.include_router(webhooks.router, prefix="/api")
 app.include_router(system.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
 
 
 _static_dir = _web_dir / "static"
