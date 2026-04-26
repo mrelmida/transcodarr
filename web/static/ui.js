@@ -3,6 +3,72 @@
   const $  = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+  // ----- SSE helpers (?nostream=1 forces the polling fallback) -----
+  const sseEnabled = !new URLSearchParams(location.search).has("nostream") && typeof EventSource !== "undefined";
+  const STREAM_OPEN_TIMEOUT_MS = 5000;
+
+  function openStream(path, handlers, pollFallback) {
+    if (!sseEnabled) { pollFallback && pollFallback(); return null; }
+    let es;
+    try { es = new EventSource(API + path); }
+    catch { pollFallback && pollFallback(); return null; }
+    let opened = false;
+    const watchdog = setTimeout(() => {
+      if (!opened) {
+        console.warn(`[SSE] ${path} never opened — falling back to polling`);
+        try { es.close(); } catch {}
+        pollFallback && pollFallback();
+      }
+    }, STREAM_OPEN_TIMEOUT_MS);
+    es.addEventListener("open", () => { opened = true; clearTimeout(watchdog); });
+    for (const [name, fn] of Object.entries(handlers)) {
+      es.addEventListener(name, (e) => {
+        try { fn(JSON.parse(e.data)); } catch (err) { console.error(`[SSE/${name}]`, err); }
+      });
+    }
+    return es;
+  }
+
+  // ----- Keyed table-row diffing (no full innerHTML rebuild) -----
+  // Sigs live in a WeakMap so we don't have to HTML-escape arbitrary content into a DOM attribute.
+  // items: array; opts: { keyFn(item)->str, sigFn(item)->str, buildRowFn(item)->html, wireRowFn(tr,item) }
+  const _rowSigs = new WeakMap();
+  function patchTableRows(tbody, items, opts) {
+    const { keyFn, sigFn, buildRowFn, wireRowFn } = opts;
+    // Drop placeholder/skeleton rows (no data-row-key)
+    Array.from(tbody.children).forEach(tr => { if (!tr.dataset.rowKey) tr.remove(); });
+    const existing = new Map();
+    tbody.querySelectorAll(":scope > tr[data-row-key]").forEach(tr => existing.set(tr.dataset.rowKey, tr));
+    let cursor = tbody.firstElementChild;
+    const seen = new Set();
+    for (const item of items) {
+      const key = keyFn(item);
+      seen.add(key);
+      const sig = sigFn(item);
+      let tr = existing.get(key);
+      if (!tr) {
+        const tmp = document.createElement("tbody");
+        tmp.innerHTML = buildRowFn(item);
+        tr = tmp.firstElementChild;
+        tbody.insertBefore(tr, cursor);
+        _rowSigs.set(tr, sig);
+        wireRowFn(tr, item);
+      } else if (_rowSigs.get(tr) !== sig) {
+        const tmp = document.createElement("tbody");
+        tmp.innerHTML = buildRowFn(item);
+        const fresh = tmp.firstElementChild;
+        tr.parentNode.replaceChild(fresh, tr);
+        _rowSigs.set(fresh, sig);
+        wireRowFn(fresh, item);
+        tr = fresh;
+      } else if (tr !== cursor) {
+        tbody.insertBefore(tr, cursor);
+      }
+      cursor = tr.nextElementSibling;
+    }
+    for (const [key, tr] of existing) if (!seen.has(key)) tr.remove();
+  }
+
   // Elements
   const statusBadge = $("#status-badge");
   const btnStart    = $("#start-btn");
@@ -959,6 +1025,98 @@ function tvTheadHtml() {
   }).join("") + "</tr>";
 }
 
+// Cache last thead html so we don't re-bind sort/select-all listeners every render
+let _moviesTheadHtml = "";
+let _tvTheadHtml = "";
+
+function _movieRowSig(m) {
+  return JSON.stringify([
+    m.status, m.progress, m.ignored, m.mtime_fmt, m.size_gb, m.elapsed_fmt,
+    m.reencode_progress, m.title, m.year, m.resolution, m.runtime_min,
+    m.vcodec, m.poster, movieSelection.has(m.path),
+  ]);
+}
+
+function _buildMovieRowHtml(m) {
+  const runtime = m.runtime_min ? `${m.runtime_min} min` : "";
+  const codec = m.vcodec || "";
+  const meta = [runtime, codec].filter(Boolean).join(" · ");
+  const rowClass = m.status === "processing" ? "processing-row" : m.status === "queued" ? "queued-row" : m.status === "pending" ? "pending-row" : "";
+  const ignoredClass = m.ignored ? " ignored-row" : "";
+  const changed = m.status === "processing" ? (m.elapsed_fmt || "...") : (m.mtime_fmt || "-");
+  const checked = movieSelection.has(m.path) ? "checked" : "";
+  const key = encodeURIComponent(m.path);
+  return `
+    <tr class="${rowClass}${ignoredClass}" data-row-key="${key}">
+      <td class="select-cell"><input type="checkbox" class="row-select" data-type="movie" ${checked}></td>
+      <td class="poster-cell">${posterHtml(m.poster)}</td>
+      <td>
+        <div class="title-cell">
+          <span class="title-main title-clickable" data-type="movie">${m.title || "-"}</span>
+          ${meta ? `<span class="title-meta">${meta}</span>` : ""}
+        </div>
+      </td>
+      <td>${m.year ?? "-"}</td>
+      <td>${fmtRes(m.resolution)}</td>
+      <td>${m.size_gb != null ? `${m.size_gb.toFixed(2)} GB` : "-"}</td>
+      <td class="changed-cell">${changed}</td>
+      <td>${statusHtml(m.status, m.progress, m.ignored, m.reencode_progress)}</td>
+      <td class="action-cell">${actionHtml(m, "movie", "")}</td>
+    </tr>
+  `;
+}
+
+function _wireMovieRow(tr, item) {
+  const path = item.path;
+  const cb = tr.querySelector(".row-select");
+  if (cb) {
+    cb.addEventListener("click", (e) => {
+      const idx = displayedMovies.findIndex(d => d.path === path);
+      if (idx === -1) return;
+      if (e.shiftKey && lastCheckedIdx.movie !== null) {
+        const start = Math.min(lastCheckedIdx.movie, idx);
+        const end = Math.max(lastCheckedIdx.movie, idx);
+        for (let i = start; i <= end; i++) {
+          const it = displayedMovies[i];
+          if (!it) continue;
+          if (cb.checked) movieSelection.add(it.path);
+          else movieSelection.delete(it.path);
+        }
+      } else {
+        if (cb.checked) movieSelection.add(path);
+        else movieSelection.delete(path);
+      }
+      lastCheckedIdx.movie = idx;
+      // Re-render — keyed diff will only repaint rows whose selection sig changed
+      renderMoviesTable(currentMediaItems.movies);
+    });
+  }
+  const titleEl = tr.querySelector(".title-clickable");
+  if (titleEl) {
+    titleEl.addEventListener("click", () => {
+      const live = currentMediaItems.movies.find(m => m.path === path) || item;
+      showMediaModal(live, "movie");
+    });
+  }
+  const handlers = [
+    [".btn-stop", handleStopClick],
+    [".btn-transcode", handleTranscodeClick],
+    [".btn-ignore", handleIgnoreClick],
+    [".btn-subs", showSubtitleSearchModal],
+    [".btn-delete-subs", handleDeleteSubsClick],
+    [".btn-enrich", handleEnrichClick],
+  ];
+  for (const [sel, fn] of handlers) {
+    tr.querySelectorAll(sel).forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const live = currentMediaItems.movies.find(m => m.path === path) || item;
+        fn(live, "movie");
+      });
+    });
+  }
+}
+
 function renderMoviesTable(items) {
   const body = $("#movies-body");
   const thead = $("#movies-thead");
@@ -973,8 +1131,30 @@ function renderMoviesTable(items) {
   // Build displayed array through filter → sort pipeline
   const displayed = getDisplayedMovies();
 
-  // Dynamic thead
-  thead.innerHTML = movieTheadHtml();
+  // Update thead only if content changed (reflects current sort indicators)
+  const newTheadHtml = movieTheadHtml();
+  if (_moviesTheadHtml !== newTheadHtml) {
+    thead.innerHTML = newTheadHtml;
+    _moviesTheadHtml = newTheadHtml;
+    thead.querySelectorAll("th.sortable").forEach(th => {
+      th.addEventListener("click", () => {
+        const col = th.dataset.sort;
+        if (movieSort.col === col) movieSort.dir = movieSort.dir === "asc" ? "desc" : "asc";
+        else { movieSort.col = col; movieSort.dir = "asc"; }
+        _moviesTheadHtml = "";  // force thead rebuild on next render so sort arrow updates
+        renderMoviesTable(currentMediaItems.movies);
+      });
+    });
+    const selectAll = thead.querySelector(".select-all");
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        const dsp = getDisplayedMovies();
+        if (selectAll.checked) dsp.forEach(d => movieSelection.add(d.path));
+        else dsp.forEach(d => movieSelection.delete(d.path));
+        renderMoviesTable(currentMediaItems.movies);
+      });
+    }
+  }
 
   if (displayed.length === 0) {
     body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">${items.length === 0 ? "No movies found" : "No matches"}</td></tr>`;
@@ -984,145 +1164,12 @@ function renderMoviesTable(items) {
   }
 
   hasProcessingItems = items.some(m => m.status === "processing" || m.status === "queued" || m.status === "pending" || m.status === "re-encoding") || hasProcessingItems;
-  body.innerHTML = displayed.map((m, idx) => {
-    const runtime = m.runtime_min ? `${m.runtime_min} min` : "";
-    const codec = m.vcodec || "";
-    const meta = [runtime, codec].filter(Boolean).join(" · ");
-    const rowClass = m.status === "processing" ? "processing-row" : m.status === "queued" ? "queued-row" : m.status === "pending" ? "pending-row" : "";
-    const ignoredClass = m.ignored ? " ignored-row" : "";
-    const changed = m.status === "processing" ? (m.elapsed_fmt || "...") : (m.mtime_fmt || "-");
-    const checked = movieSelection.has(m.path) ? "checked" : "";
-    return `
-    <tr class="${rowClass}${ignoredClass}">
-      <td class="select-cell"><input type="checkbox" class="row-select" data-type="movie" data-idx="${idx}" ${checked}></td>
-      <td class="poster-cell">${posterHtml(m.poster)}</td>
-      <td>
-        <div class="title-cell">
-          <span class="title-main title-clickable" data-type="movie" data-idx="${idx}">${m.title || "-"}</span>
-          ${meta ? `<span class="title-meta">${meta}</span>` : ""}
-        </div>
-      </td>
-      <td>${m.year ?? "-"}</td>
-      <td>${fmtRes(m.resolution)}</td>
-      <td>${m.size_gb != null ? `${m.size_gb.toFixed(2)} GB` : "-"}</td>
-      <td class="changed-cell">${changed}</td>
-      <td>${statusHtml(m.status, m.progress, m.ignored, m.reencode_progress)}</td>
-      <td class="action-cell">${actionHtml(m, "movie", idx)}</td>
-    </tr>
-  `}).join("");
 
-  // Wire sort headers
-  thead.querySelectorAll("th.sortable").forEach(th => {
-    th.addEventListener("click", () => {
-      const col = th.dataset.sort;
-      if (movieSort.col === col) {
-        movieSort.dir = movieSort.dir === "asc" ? "desc" : "asc";
-      } else {
-        movieSort.col = col;
-        movieSort.dir = "asc";
-      }
-      renderMoviesTable(currentMediaItems.movies);
-    });
-  });
-
-  // Wire select-all
-  const selectAll = thead.querySelector(".select-all");
-  if (selectAll) {
-    selectAll.addEventListener("change", () => {
-      if (selectAll.checked) {
-        displayed.forEach(d => movieSelection.add(d.path));
-      } else {
-        displayed.forEach(d => movieSelection.delete(d.path));
-      }
-      renderMoviesTable(currentMediaItems.movies);
-    });
-  }
-
-  // Wire row checkboxes (with shift-click range selection)
-  body.querySelectorAll(".row-select").forEach(cb => {
-    cb.addEventListener("click", (e) => {
-      const idx = parseInt(cb.dataset.idx, 10);
-      const item = displayedMovies[idx];
-      if (!item) return;
-      if (e.shiftKey && lastCheckedIdx.movie !== null) {
-        const start = Math.min(lastCheckedIdx.movie, idx);
-        const end = Math.max(lastCheckedIdx.movie, idx);
-        for (let i = start; i <= end; i++) {
-          const it = displayedMovies[i];
-          if (!it) continue;
-          if (cb.checked) movieSelection.add(it.path);
-          else movieSelection.delete(it.path);
-        }
-        // Update all checkboxes in range without full re-render
-        body.querySelectorAll(".row-select").forEach(c => {
-          const ci = parseInt(c.dataset.idx, 10);
-          if (ci >= start && ci <= end) c.checked = cb.checked;
-        });
-      } else {
-        if (cb.checked) movieSelection.add(item.path);
-        else movieSelection.delete(item.path);
-      }
-      lastCheckedIdx.movie = idx;
-      updateBulkActionBar("movie");
-      updateSelectAllState("movie");
-    });
-  });
-
-  // Click handlers use displayedMovies
-  body.querySelectorAll(".title-clickable").forEach(el => {
-    el.addEventListener("click", () => {
-      const idx = parseInt(el.dataset.idx, 10);
-      const item = displayedMovies[idx];
-      if (item) showMediaModal(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-stop").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) handleStopClick(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-transcode").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) handleTranscodeClick(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-ignore").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) handleIgnoreClick(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-subs").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) showSubtitleSearchModal(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-delete-subs").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) handleDeleteSubsClick(item, "movie");
-    });
-  });
-
-  body.querySelectorAll(".btn-enrich").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedMovies[parseInt(el.dataset.idx, 10)];
-      if (item) handleEnrichClick(item, "movie");
-    });
+  patchTableRows(body, displayed, {
+    keyFn: m => m.path,
+    sigFn: _movieRowSig,
+    buildRowFn: _buildMovieRowHtml,
+    wireRowFn: _wireMovieRow,
   });
 
   updateBulkActionBar("movie");
@@ -1412,57 +1459,42 @@ async function loadMovies(forceRefresh = false){
   } catch { body.innerHTML = ""; }
 }
 
-function renderTVTable(items) {
-  const body = $("#tv-body");
-  const thead = $("#tv-thead");
-  currentMediaItems.tv = items;
+function _tvRowSig(e) {
+  return JSON.stringify([
+    e.status, e.progress, e.ignored, e.mtime_fmt, e.size_gb, e.elapsed_fmt,
+    e.reencode_progress, e.show, e.title, e.season, e.episode,
+    JSON.stringify(e.episodes || null), e.resolution, e.runtime_min, e.vcodec,
+    e.poster, tvSelection.has(e.path),
+  ]);
+}
 
-  // Stats on raw (unfiltered) items
-  const readyItems = items.filter(e => e.status === "ready");
-  tvStats.count = readyItems.length;
-  tvStats.sizeGb = readyItems.reduce((sum, e) => sum + (e.size_gb || 0), 0);
-  updateMediaStats();
-
-  // Build displayed array through filter → sort pipeline
-  const displayed = getDisplayedTV();
-
-  // Dynamic thead
-  thead.innerHTML = tvTheadHtml();
-
-  if (displayed.length === 0) {
-    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">${items.length === 0 ? "No TV shows found" : "No matches"}</td></tr>`;
-    updateBulkActionBar("tv");
-    updateSelectAllState("tv");
-    return;
-  }
-
-  hasProcessingItems = items.some(e => e.status === "processing" || e.status === "queued" || e.status === "pending" || e.status === "re-encoding") || hasProcessingItems;
-  body.innerHTML = displayed.map((e, idx) => {
-    let epLabel = "-";
-    if (e.season != null && e.episode != null) {
-      const s = String(e.season).padStart(2, "0");
-      if (e.episodes && e.episodes.length > 1) {
-        const first = String(e.episodes[0]).padStart(2, "0");
-        const last = String(e.episodes[e.episodes.length - 1]).padStart(2, "0");
-        epLabel = `S${s}E${first}-E${last}`;
-      } else {
-        epLabel = `S${s}E${String(e.episode).padStart(2, "0")}`;
-      }
+function _buildTVRowHtml(e) {
+  let epLabel = "-";
+  if (e.season != null && e.episode != null) {
+    const s = String(e.season).padStart(2, "0");
+    if (e.episodes && e.episodes.length > 1) {
+      const first = String(e.episodes[0]).padStart(2, "0");
+      const last = String(e.episodes[e.episodes.length - 1]).padStart(2, "0");
+      epLabel = `S${s}E${first}-E${last}`;
+    } else {
+      epLabel = `S${s}E${String(e.episode).padStart(2, "0")}`;
     }
-    const runtime = e.runtime_min ? `${e.runtime_min} min` : "";
-    const codec = e.vcodec || "";
-    const meta = [runtime, codec].filter(Boolean).join(" · ");
-    const rowClass = e.status === "processing" ? "processing-row" : e.status === "queued" ? "queued-row" : e.status === "pending" ? "pending-row" : "";
-    const ignoredClass = e.ignored ? " ignored-row" : "";
-    const changed = e.status === "processing" ? (e.elapsed_fmt || "...") : (e.mtime_fmt || "-");
-    const checked = tvSelection.has(e.path) ? "checked" : "";
-    return `
-    <tr class="${rowClass}${ignoredClass}">
-      <td class="select-cell"><input type="checkbox" class="row-select" data-type="tv" data-idx="${idx}" ${checked}></td>
+  }
+  const runtime = e.runtime_min ? `${e.runtime_min} min` : "";
+  const codec = e.vcodec || "";
+  const meta = [runtime, codec].filter(Boolean).join(" · ");
+  const rowClass = e.status === "processing" ? "processing-row" : e.status === "queued" ? "queued-row" : e.status === "pending" ? "pending-row" : "";
+  const ignoredClass = e.ignored ? " ignored-row" : "";
+  const changed = e.status === "processing" ? (e.elapsed_fmt || "...") : (e.mtime_fmt || "-");
+  const checked = tvSelection.has(e.path) ? "checked" : "";
+  const key = encodeURIComponent(e.path);
+  return `
+    <tr class="${rowClass}${ignoredClass}" data-row-key="${key}">
+      <td class="select-cell"><input type="checkbox" class="row-select" data-type="tv" ${checked}></td>
       <td class="poster-cell">${posterHtml(e.poster)}</td>
       <td>
         <div class="title-cell">
-          <span class="title-main title-clickable" data-type="tv" data-idx="${idx}">${e.show || "-"}</span>
+          <span class="title-main title-clickable" data-type="tv">${e.show || "-"}</span>
           ${meta ? `<span class="title-meta">${meta}</span>` : ""}
         </div>
       </td>
@@ -1471,43 +1503,18 @@ function renderTVTable(items) {
       <td>${e.size_gb != null ? `${e.size_gb.toFixed(2)} GB` : "-"}</td>
       <td class="changed-cell">${changed}</td>
       <td>${statusHtml(e.status, e.progress, e.ignored, e.reencode_progress)}</td>
-      <td class="action-cell">${actionHtml(e, "tv", idx)}</td>
+      <td class="action-cell">${actionHtml(e, "tv", "")}</td>
     </tr>
-  `}).join("");
+  `;
+}
 
-  // Wire sort headers
-  thead.querySelectorAll("th.sortable").forEach(th => {
-    th.addEventListener("click", () => {
-      const col = th.dataset.sort;
-      if (tvSort.col === col) {
-        tvSort.dir = tvSort.dir === "asc" ? "desc" : "asc";
-      } else {
-        tvSort.col = col;
-        tvSort.dir = "asc";
-      }
-      renderTVTable(currentMediaItems.tv);
-    });
-  });
-
-  // Wire select-all
-  const selectAll = thead.querySelector(".select-all");
-  if (selectAll) {
-    selectAll.addEventListener("change", () => {
-      if (selectAll.checked) {
-        displayed.forEach(d => tvSelection.add(d.path));
-      } else {
-        displayed.forEach(d => tvSelection.delete(d.path));
-      }
-      renderTVTable(currentMediaItems.tv);
-    });
-  }
-
-  // Wire row checkboxes (with shift-click range selection)
-  body.querySelectorAll(".row-select").forEach(cb => {
+function _wireTVRow(tr, item) {
+  const path = item.path;
+  const cb = tr.querySelector(".row-select");
+  if (cb) {
     cb.addEventListener("click", (e) => {
-      const idx = parseInt(cb.dataset.idx, 10);
-      const item = displayedTV[idx];
-      if (!item) return;
+      const idx = displayedTV.findIndex(d => d.path === path);
+      if (idx === -1) return;
       if (e.shiftKey && lastCheckedIdx.tv !== null) {
         const start = Math.min(lastCheckedIdx.tv, idx);
         const end = Math.max(lastCheckedIdx.tv, idx);
@@ -1517,75 +1524,90 @@ function renderTVTable(items) {
           if (cb.checked) tvSelection.add(it.path);
           else tvSelection.delete(it.path);
         }
-        body.querySelectorAll(".row-select").forEach(c => {
-          const ci = parseInt(c.dataset.idx, 10);
-          if (ci >= start && ci <= end) c.checked = cb.checked;
-        });
       } else {
-        if (cb.checked) tvSelection.add(item.path);
-        else tvSelection.delete(item.path);
+        if (cb.checked) tvSelection.add(path);
+        else tvSelection.delete(path);
       }
       lastCheckedIdx.tv = idx;
-      updateBulkActionBar("tv");
-      updateSelectAllState("tv");
+      renderTVTable(currentMediaItems.tv);
     });
-  });
+  }
+  const titleEl = tr.querySelector(".title-clickable");
+  if (titleEl) {
+    titleEl.addEventListener("click", () => {
+      const live = currentMediaItems.tv.find(m => m.path === path) || item;
+      showMediaModal(live, "tv");
+    });
+  }
+  const handlers = [
+    [".btn-stop", handleStopClick],
+    [".btn-transcode", handleTranscodeClick],
+    [".btn-ignore", handleIgnoreClick],
+    [".btn-subs", showSubtitleSearchModal],
+    [".btn-delete-subs", handleDeleteSubsClick],
+    [".btn-enrich", handleEnrichClick],
+  ];
+  for (const [sel, fn] of handlers) {
+    tr.querySelectorAll(sel).forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const live = currentMediaItems.tv.find(m => m.path === path) || item;
+        fn(live, "tv");
+      });
+    });
+  }
+}
 
-  // Click handlers use displayedTV
-  body.querySelectorAll(".title-clickable").forEach(el => {
-    el.addEventListener("click", () => {
-      const idx = parseInt(el.dataset.idx, 10);
-      const item = displayedTV[idx];
-      if (item) showMediaModal(item, "tv");
-    });
-  });
+function renderTVTable(items) {
+  const body = $("#tv-body");
+  const thead = $("#tv-thead");
+  currentMediaItems.tv = items;
 
-  body.querySelectorAll(".btn-stop").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) handleStopClick(item, "tv");
-    });
-  });
+  const readyItems = items.filter(e => e.status === "ready");
+  tvStats.count = readyItems.length;
+  tvStats.sizeGb = readyItems.reduce((sum, e) => sum + (e.size_gb || 0), 0);
+  updateMediaStats();
 
-  body.querySelectorAll(".btn-transcode").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) handleTranscodeClick(item, "tv");
-    });
-  });
+  const displayed = getDisplayedTV();
 
-  body.querySelectorAll(".btn-ignore").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) handleIgnoreClick(item, "tv");
+  const newTheadHtml = tvTheadHtml();
+  if (_tvTheadHtml !== newTheadHtml) {
+    thead.innerHTML = newTheadHtml;
+    _tvTheadHtml = newTheadHtml;
+    thead.querySelectorAll("th.sortable").forEach(th => {
+      th.addEventListener("click", () => {
+        const col = th.dataset.sort;
+        if (tvSort.col === col) tvSort.dir = tvSort.dir === "asc" ? "desc" : "asc";
+        else { tvSort.col = col; tvSort.dir = "asc"; }
+        _tvTheadHtml = "";
+        renderTVTable(currentMediaItems.tv);
+      });
     });
-  });
+    const selectAll = thead.querySelector(".select-all");
+    if (selectAll) {
+      selectAll.addEventListener("change", () => {
+        const dsp = getDisplayedTV();
+        if (selectAll.checked) dsp.forEach(d => tvSelection.add(d.path));
+        else dsp.forEach(d => tvSelection.delete(d.path));
+        renderTVTable(currentMediaItems.tv);
+      });
+    }
+  }
 
-  body.querySelectorAll(".btn-subs").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) showSubtitleSearchModal(item, "tv");
-    });
-  });
+  if (displayed.length === 0) {
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">${items.length === 0 ? "No TV shows found" : "No matches"}</td></tr>`;
+    updateBulkActionBar("tv");
+    updateSelectAllState("tv");
+    return;
+  }
 
-  body.querySelectorAll(".btn-delete-subs").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) handleDeleteSubsClick(item, "tv");
-    });
-  });
+  hasProcessingItems = items.some(e => e.status === "processing" || e.status === "queued" || e.status === "pending" || e.status === "re-encoding") || hasProcessingItems;
 
-  body.querySelectorAll(".btn-enrich").forEach(el => {
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const item = displayedTV[parseInt(el.dataset.idx, 10)];
-      if (item) handleEnrichClick(item, "tv");
-    });
+  patchTableRows(body, displayed, {
+    keyFn: e => e.path,
+    sigFn: _tvRowSig,
+    buildRowFn: _buildTVRowHtml,
+    wireRowFn: _wireTVRow,
   });
 
   updateBulkActionBar("tv");
@@ -3644,17 +3666,137 @@ async function loadTV(forceRefresh = false){
     });
   }
 
+  // ----- SSE delta appliers -----
+  function _applyMoviesDelta(d) {
+    const map = new Map();
+    for (const item of currentMediaItems.movies) map.set(item.path, item);
+    for (const item of (d.changed || [])) map.set(item.path, item);
+    for (const path of (d.removed || [])) map.delete(path);
+    moviesScanning = d.scanning === true;
+    const refreshBtn = $("#refresh-movies");
+    if (refreshBtn) {
+      refreshBtn.textContent = moviesScanning ? "Scanning..." : "Refresh";
+      refreshBtn.disabled = !!moviesScanning;
+    }
+    renderMoviesTable(Array.from(map.values()));
+  }
+
+  function _applyTVDelta(d) {
+    const map = new Map();
+    for (const item of currentMediaItems.tv) map.set(item.path, item);
+    for (const item of (d.changed || [])) map.set(item.path, item);
+    for (const path of (d.removed || [])) map.delete(path);
+    tvScanning = d.scanning === true;
+    const refreshBtn = $("#refresh-tv");
+    if (refreshBtn) {
+      refreshBtn.textContent = tvScanning ? "Scanning..." : "Refresh";
+      refreshBtn.disabled = !!tvScanning;
+    }
+    renderTVTable(Array.from(map.values()));
+  }
+
+  function _applyStatus(d) {
+    const running = (d.status || d.running) === "running" || d.running === true;
+    setRunningUI(running);
+  }
+
+  function _applyWorkers(payload) {
+    workerStatus = payload || workerStatus;
+    const mw = workerStatus.manual_workers || 0;
+    const aw = workerStatus.auto_workers || 0;
+    const am = workerStatus.active_manual_jobs || 0;
+    const aa = workerStatus.active_auto_jobs || 0;
+    const autoCount = $("#auto-worker-count"); const autoPill = $("#auto-workers");
+    if (autoCount) autoCount.textContent = aw > 0 ? `${aa}/${aw}` : "off";
+    if (autoPill) { autoPill.classList.toggle("busy", aw > 0 && aa >= aw); autoPill.classList.toggle("off", aw === 0); }
+    const autoGroup = $("#auto-group");
+    if (autoGroup) autoGroup.title = aw > 0 ? `Auto: ${aa} active / ${aw} workers` : "Auto: disabled";
+    const manualCount = $("#manual-worker-count"); const manualPill = $("#manual-workers");
+    if (manualCount) manualCount.textContent = mw > 0 ? `${am}/${mw}` : "off";
+    if (manualPill) { manualPill.classList.toggle("busy", mw > 0 && am >= mw); manualPill.classList.toggle("off", mw === 0); }
+    const manualBadge = $("#manual-badge");
+    if (manualBadge) {
+      if (mw === 0) { manualBadge.textContent = "Off"; manualBadge.className = "badge badge-off"; }
+      else if (am >= mw) { manualBadge.textContent = "Busy"; manualBadge.className = "badge badge-busy"; }
+      else { manualBadge.textContent = "Ready"; manualBadge.className = "badge badge-ready"; }
+    }
+    const manualGroup = $("#manual-group");
+    if (manualGroup) manualGroup.title = mw > 0 ? `Manual: ${am} active / ${mw} workers` : "Manual: disabled";
+  }
+
+  function _applyLogChunk(d) {
+    if (d.reset || (tailInode && d.inode && d.inode !== tailInode)) {
+      logOut.textContent = "";
+    }
+    if (typeof d.text === "string" && d.text.length) appendText(d.text);
+    if (typeof d.pos === "number") tailPos = d.pos;
+    if (d.inode) tailInode = d.inode;
+  }
+
+  function _applyStats(payload) {
+    statsData = payload;
+    if (!statsViewActive) return;
+    renderStatGauges();
+    renderLineChart("cpu-chart", statsData.history.timestamps, statsData.history.cpu, {
+      color: "var(--accent)", maxY: 100, suffix: "%", label: "CPU"
+    });
+    renderLineChart("ram-chart", statsData.history.timestamps, statsData.history.ram, {
+      color: "var(--accent-2)", maxY: 100, suffix: "%", label: "RAM"
+    });
+    renderDiskMiniChart();
+    if (_chartModalOpen && (_chartModalOpen.type === "cpu" || _chartModalOpen.type === "ram")) {
+      renderModalChart(_chartModalOpen.type, _chartModalOpen.range);
+    }
+  }
+
   // ----- Kickoff -----
+  // First-paint: synchronous loads keep tables/status populated for ~500ms before SSE catches up.
+  // Logs are NOT pre-populated synchronously — the SSE log stream sends a reset on connect,
+  // which would otherwise clear any pre-painted text and cause a flash.
   updateStatus();
   updateWorkerStatus();
   loadMovies(); loadTV();
   loadSettings();
-  pollLogs();
-  setInterval(updateStatus, 2000);
-  setInterval(updateWorkerStatus, 2000);  // Update worker status every 2s
-  setInterval(pollLogs, 1500);
-  setInterval(pollScanStatus, 2000);  // Check scan status every 2s
-  setInterval(pollProcessing, 3000);  // Update processing progress every 3s
-  setInterval(updateSystemStats, 5000);    // System stats every 5s
-  setInterval(loadStorageHistory, 300000); // Storage history every 5 min
+
+  // Open SSE streams. Each one falls back to its old polling timer if it can't connect.
+  openStream("/events/status", {
+    status: _applyStatus,
+    workers: _applyWorkers,
+  }, () => {
+    setInterval(updateStatus, 2000);
+    setInterval(updateWorkerStatus, 2000);
+  });
+
+  openStream("/events/media", {
+    movies_delta: _applyMoviesDelta,
+    tv_delta: _applyTVDelta,
+  }, () => {
+    setInterval(pollScanStatus, 2000);
+    setInterval(pollProcessing, 3000);
+  });
+
+  openStream("/events/logs", {
+    log_chunk: _applyLogChunk,
+  }, () => {
+    pollLogs();
+    setInterval(pollLogs, 1500);
+  });
+
+  // System stats stream is opened lazily when the stats view becomes active (see checkStatsView)
+  let _systemStream = null;
+  const _origCheckStatsView = checkStatsView;
+  checkStatsView = function () {
+    const wasActive = statsViewActive;
+    _origCheckStatsView();
+    if (statsViewActive && !wasActive && !_systemStream) {
+      _systemStream = openStream("/events/system", { stats: _applyStats }, () => {
+        setInterval(updateSystemStats, 5000);
+      });
+    } else if (!statsViewActive && _systemStream) {
+      try { _systemStream.close(); } catch {}
+      _systemStream = null;
+    }
+  };
+
+  setInterval(loadStorageHistory, 300000); // Storage history every 5 min — left as polling, changes too rarely to bother with SSE
 })();
