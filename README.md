@@ -4,7 +4,8 @@ Automated video transcoding orchestrator for the *arr ecosystem. Watches for new
 
 Built for homelabbers who want their entire library in a consistent, streaming-friendly format without manual intervention.
 
-![Media Movies Table](screenshots/screenshot-1.png)
+![Movies tile view — browse, filter, and bulk-action your library](screenshots/screenshot-1.png)
+*Movies library in tile view — switch between tile and table layouts, infinite-scroll pagination, server-side filter and sort.*
 
 ## What It Does
 
@@ -40,7 +41,8 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 - Real-time progress tracking with percentage and file size
 - Output verification (duration, streams, file size sanity checks)
 
-![Encoding Preset Settings](screenshots/screenshot-8.PNG)
+![High Quality preset — codec, container, resolution, audio settings](screenshots/screenshot-8.PNG)
+*Each preset exposes the full encoder dial-set: video codec, container, resolution, FFmpeg preset, profile, CRF, and the matching audio chain.*
 
 **Subtitles**
 - Multi-provider fetching: OpenSubtitles.com, Podnapisi, Addic7ed
@@ -65,9 +67,11 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 - Live log viewer
 - Connection testing for Radarr/Sonarr
 
-![Media TV Table](screenshots/screenshot-2.png)
+![TV Shows in table view — sortable columns, bulk actions, status badges](screenshots/screenshot-2.png)
+*TV episode browser. Same library, different layout — table view shows episode codes, resolution, size, and status at a glance.*
 
-![Media Enlarged](screenshots/screenshot-3.png)
+![Item detail modal — codecs, bitrates, runtime, transcode history](screenshots/screenshot-3.png)
+*Click any title to inspect the full media metadata, file path, and transcode history.*
 
 ## Quick Start
 
@@ -136,10 +140,6 @@ docker compose -f docker-compose.reencode.yml up -d --build
 
 The watchdog is disabled in this mode. Use the web UI to browse your library and trigger batch re-encodes manually. Files are processed in-place — copied to temp, transcoded, then the original is replaced.
 
-![Auto Preset Rules](screenshots/screenshot-4.png)
-
-![Connections Settings](screenshots/screenshot-5.png)
-
 ## Configuration
 
 All runtime settings are stored in PostgreSQL and configurable through the UI. The app reads settings with this priority:
@@ -178,6 +178,9 @@ Default rules:
 | Legacy Codecs | codec in [mpeg2, mpeg4, wmv3, vc1] | 4K Downscale |
 | *Fallback* | *(no match)* | Audio Only |
 
+![Auto preset rule editor — match by resolution, codec, media type](screenshots/screenshot-4.png)
+*Build rules visually: select a resolution range and codec set, pick a target preset. The first matching rule wins; the fallback handles everything else.*
+
 ### Worker Pool
 
 | Setting | Default | Description |
@@ -187,7 +190,8 @@ Default rules:
 
 Both pools can be resized live from the UI without restarting.
 
-![Systems Usage Logging](screenshots/screenshot-6.png)
+![System view — CPU, memory, output storage, and 90-day storage trend](screenshots/screenshot-6.png)
+*Live CPU/memory gauges with 24-hour history, current output disk usage, and a long-term storage trend chart so you can see your library grow.*
 
 ### Integration Settings
 
@@ -199,6 +203,9 @@ Both pools can be resized live from the UI without restarting.
 
 Path remapping (`PATH_FROM`/`PATH_TO`) translates container paths to Radarr/Sonarr's view of the filesystem.
 
+![Integrations panel — connection status per service](screenshots/screenshot-5.png)
+*Each integration shows its live connection state: Connected, Configured (URL+key set, not test-pinged), or Not Configured.*
+
 ### Subtitle Providers
 
 | Provider | Auth Required | Cooldown | Notes |
@@ -209,7 +216,8 @@ Path remapping (`PATH_FROM`/`PATH_TO`) translates container paths to Radarr/Sona
 
 Provider order is configurable. Accounts rotate round-robin to distribute rate limits.
 
-![Subtitles Settings](screenshots/screenshot-7.png)
+![Subtitle providers — multi-account support, per-provider toggles](screenshots/screenshot-7.png)
+*Add multiple accounts per provider; Transcodarr round-robins through them and respects per-provider cooldowns to avoid rate-limits.*
 
 ## How It Works
 
@@ -271,16 +279,20 @@ All endpoints are under `/api` and require the `X-API-Key` header set to your `A
 | `/api/status` | GET | Running state |
 | `/api/settings` | GET/POST | Read/write all settings |
 | `/api/transcode/manual` | POST | Queue a single file for transcode |
-| `/api/transcode/batch` | POST | Queue multiple files (sequential, returns `batch_id`) |
+| `/api/transcode/batch` | POST | Queue multiple files by path (sequential, returns `batch_id`) |
+| `/api/transcode/batch-by-filter` | POST | Queue every item matching a server-side filter — pairs with the UI's "select all matching" |
 | `/api/transcode/batch/{batch_id}` | GET | List all jobs in a batch |
 | `/api/transcode/batch/{batch_id}/stop` | POST | Stop a batch — kills current file + cancels remaining |
 | `/api/transcode/stop` | POST | Stop a file — also stops its batch if part of one |
 | `/api/transcode/jobs` | GET | List all transcode jobs + progress |
 | `/api/transcode/jobs/{job_id}` | GET | Get a specific job |
 | `/api/transcode/jobs/{job_id}` | DELETE | Cancel a queued job |
-| `/api/media/movies` | GET | List movies (supports `sort`, `sort_order`, `q`, `limit`) |
-| `/api/media/tv` | GET | List TV episodes (supports `sort`, `sort_order`, `q`, `limit`) |
-| `/api/media/pending` | GET | Pending files awaiting transcode (supports `sort`, `sort_order`, `q`, `limit`, `media_type`) |
+| `/api/media/movies` | GET | List movies (supports `q`, `status`, `sort`, `sort_order`, `page`, `page_size`) |
+| `/api/media/tv` | GET | List TV episodes (same query params as movies) |
+| `/api/media/pending` | GET | Pending files awaiting transcode (`q`, `sort`, `sort_order`, `limit`, `media_type`) |
+| `/api/media/ignore` | POST | Toggle/add/remove ignore-list entry by path |
+| `/api/media/ignore-by-filter` | POST | Bulk-ignore every pending item matching a filter |
+| `/api/media/output-by-filter` | POST | Bulk-delete output files matching a filter (companion files included) |
 | `/api/subtitles/search` | POST | Manually trigger subtitle search |
 | `/api/system/stats` | GET | CPU/RAM/disk usage + 24h history |
 | `/api/connections` | GET | Integration connection status |
@@ -288,6 +300,10 @@ All endpoints are under `/api` and require the `X-API-Key` header set to your `A
 | `/api/webhook/sonarr` | POST | Sonarr post-import webhook |
 | `/api/workers/status` | GET | Worker pool state |
 | `/api/logs/tail` | GET | Live log tail (rotation-aware) |
+| `/api/events/status` | GET (SSE) | Live stream of run state + worker pool changes |
+| `/api/events/media` | GET (SSE) | Live stream of in-flight transcode progress + scan state |
+| `/api/events/logs` | GET (SSE) | Live tail of the transcode log |
+| `/api/events/system` | GET (SSE) | Live CPU/RAM/disk metrics |
 
 ### Sorting & Filtering
 
@@ -296,14 +312,19 @@ Media endpoints (`/api/media/movies`, `/api/media/tv`, `/api/media/pending`) sup
 | Parameter | Values | Description |
 |-----------|--------|-------------|
 | `q` | any string | Substring search across all fields |
-| `sort` | `mtime`, `size_gb`, `title`, `year` | Sort field |
+| `status` | `all`, `ready`, `pending`, `processing`, `ignored` | Filter by status bucket |
+| `sort` | `mtime`, `size_gb`, `title`, `year`, `show`, `season`, `episode` | Sort field |
 | `sort_order` | `asc`, `desc` | Sort direction (default: `asc`) |
-| `limit` | integer | Max items returned (applied after sort) |
+| `page` | integer ≥1 | Page number (default: `0` = no pagination) |
+| `page_size` | integer | Items per page (default: `0` = return everything) |
+| `limit` | integer | Legacy max-items cap, applied after sort if pagination is off |
 | `media_type` | `movie`, `tv`, `all` | Filter by type (pending endpoint only) |
 
-Example — get the 50 oldest pending movies by last-modified time:
+Paginated responses include `total_count`, `page`, `page_size`, and `has_more` so clients can build infinite-scroll or "X of Y" displays without a separate count call.
+
+Example — get page 1 of pending movies that are ready, 50 per page, newest first:
 ```
-GET /api/media/pending?media_type=movie&sort=mtime&sort_order=asc&limit=50
+GET /api/media/movies?status=ready&sort=mtime&sort_order=desc&page=1&page_size=50
 ```
 
 ### Batch Transcoding
@@ -366,7 +387,9 @@ These are rough guidelines — actual usage depends on codec, resolution, and so
 
 - **Backend**: Python 3.11, FastAPI, Uvicorn
 - **Frontend**: Vanilla JavaScript (single-page app, no build step)
-- **Database**: PostgreSQL (runtime settings, transcode history, media metadata)
+- **Database**: PostgreSQL (runtime settings, transcode history, media cache, metadata)
+- **Live updates**: Server-Sent Events (SSE) for in-flight progress, scan state, and system metrics
+- **Pagination**: Server-side filter / sort / paginate with infinite-scroll on the frontend
 - **Transcoding**: FFmpeg with progress streaming
 - **Subtitles**: Subliminal + ffsubsync
 - **File Monitoring**: Python watchdog
