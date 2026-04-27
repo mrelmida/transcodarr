@@ -974,6 +974,10 @@ th.sort-active{color:var(--accent)}
    The existing 920px block handles tablet sidebar collapse; this is phone-only.
    ========================================================================== */
 @media (max-width: 600px) {
+  /* --- Unstick header + sidebar so menus scroll away with content (reclaim viewport) --- */
+  .app-header { position: static !important; }
+  .sidebar    { position: static !important; }
+
   /* --- Header: wrap worker groups below the brand row --- */
   .app-header {
     flex-wrap: wrap; gap: 6px; padding: 8px 10px; min-height: auto;
