@@ -35,10 +35,10 @@
   const _rowSigs = new WeakMap();
   function patchTableRows(tbody, items, opts) {
     const { keyFn, sigFn, buildRowFn, wireRowFn } = opts;
-    // Drop placeholder/skeleton rows (no data-row-key)
+    // Drop placeholder/skeleton children (no data-row-key) — works for tr OR div tiles
     Array.from(tbody.children).forEach(tr => { if (!tr.dataset.rowKey) tr.remove(); });
     const existing = new Map();
-    tbody.querySelectorAll(":scope > tr[data-row-key]").forEach(tr => existing.set(tr.dataset.rowKey, tr));
+    tbody.querySelectorAll(":scope > [data-row-key]").forEach(tr => existing.set(tr.dataset.rowKey, tr));
     let cursor = tbody.firstElementChild;
     const seen = new Set();
     for (const item of items) {
@@ -1117,6 +1117,73 @@ function _wireMovieRow(tr, item) {
   }
 }
 
+// ----- Tile renderers (movie + TV) — share state, sigs, wireRow with the table renderer -----
+function _movieTileSig(m) {
+  // Same axes as table sig; tile layout reuses the same data
+  return _movieRowSig(m);
+}
+
+function _buildMovieTileHtml(m) {
+  const rowClass = m.status === "processing" ? "processing-row" : m.status === "queued" ? "queued-row" : m.status === "pending" ? "pending-row" : "";
+  const ignoredClass = m.ignored ? " ignored-row" : "";
+  const checked = movieSelection.has(m.path) ? "checked" : "";
+  const key = encodeURIComponent(m.path);
+  const titleAttr = (m.title || "").replace(/"/g, "&quot;");
+
+  let statusPill = "";
+  if (m.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round((m.progress || 0) * 100)}%</span>`;
+  else if (m.status === "queued") statusPill = `<span class="tile-status-pill" style="background:rgba(139,92,246,.85)">Queued</span>`;
+  else if (m.status === "pending") statusPill = `<span class="tile-status-pill" style="background:rgba(245,158,11,.85)">Pending</span>`;
+  else if (m.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round((m.reencode_progress || 0) * 100)}%</span>`;
+  else if (m.ignored) statusPill = `<span class="tile-status-pill" style="background:rgba(120,120,120,.85)">Ignored</span>`;
+
+  let progressOverlay = "";
+  if (m.status === "processing") {
+    const pct = Math.round((m.progress || 0) * 100);
+    progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>${pct}%</span><span>${m.elapsed_fmt || ""}</span></div></div>`;
+  } else if (m.status === "re-encoding") {
+    const pct = Math.round((m.reencode_progress || 0) * 100);
+    progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>Re-encode ${pct}%</span><span>${m.reencode_elapsed_fmt || ""}</span></div></div>`;
+  }
+
+  const posterContent = m.poster
+    ? `<img src="${m.poster}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="tile-no-poster">${m.title || "No poster"}</div>`;
+
+  const subtitle = [m.year, fmtRes(m.resolution), m.size_gb != null ? `${m.size_gb.toFixed(1)} GB` : null].filter(Boolean).join(" · ");
+
+  return `
+    <div class="media-tile ${rowClass}${ignoredClass}" data-row-key="${key}">
+      <div class="tile-poster-area">
+        <input type="checkbox" class="tile-checkbox row-select" ${checked} title="Select">
+        ${statusPill}
+        ${posterContent}
+        ${progressOverlay}
+      </div>
+      <div class="tile-body">
+        <div class="tile-title title-clickable" title="${titleAttr}">${m.title || "-"}</div>
+        ${subtitle ? `<div class="tile-meta">${subtitle}</div>` : ""}
+        <div class="tile-actions">${actionHtml(m, "movie", "")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function _renderMoviesTiles(displayed, items) {
+  const grid = $("#movies-tile-grid");
+  if (!grid) return;
+  if (displayed.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;color:var(--text-muted);text-align:center;padding:40px">${items.length === 0 ? "No movies found" : "No matches"}</div>`;
+    return;
+  }
+  patchTableRows(grid, displayed, {
+    keyFn: m => m.path,
+    sigFn: _movieTileSig,
+    buildRowFn: _buildMovieTileHtml,
+    wireRowFn: _wireMovieRow,  // identical click behavior — looks up by path
+  });
+}
+
 function renderMoviesTable(items) {
   const body = $("#movies-body");
   const thead = $("#movies-thead");
@@ -1142,7 +1209,7 @@ function renderMoviesTable(items) {
         if (movieSort.col === col) movieSort.dir = movieSort.dir === "asc" ? "desc" : "asc";
         else { movieSort.col = col; movieSort.dir = "asc"; }
         _moviesTheadHtml = "";  // force thead rebuild on next render so sort arrow updates
-        renderMoviesTable(currentMediaItems.movies);
+        fetchPage("movie", { reset: true });
       });
     });
     const selectAll = thead.querySelector(".select-all");
@@ -1158,6 +1225,7 @@ function renderMoviesTable(items) {
 
   if (displayed.length === 0) {
     body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">${items.length === 0 ? "No movies found" : "No matches"}</td></tr>`;
+    _renderMoviesTiles(displayed, items);
     updateBulkActionBar("movie");
     updateSelectAllState("movie");
     return;
@@ -1171,6 +1239,9 @@ function renderMoviesTable(items) {
     buildRowFn: _buildMovieRowHtml,
     wireRowFn: _wireMovieRow,
   });
+
+  // Mirror to tile grid — both views stay in sync regardless of which is visible
+  _renderMoviesTiles(displayed, items);
 
   updateBulkActionBar("movie");
   updateSelectAllState("movie");
@@ -1207,6 +1278,8 @@ function updateBulkActionBar(type) {
   if (transcodeBtn) transcodeBtn.disabled = !hasEncodable;
   if (ignoreBtn) ignoreBtn.disabled = !hasIgnorable;
   if (deleteBtn) deleteBtn.disabled = !hasReady;
+
+  _updateSelectAllBanner(type);
 }
 
 function updateSelectAllState(type) {
@@ -1225,6 +1298,31 @@ function updateSelectAllState(type) {
 }
 
 async function handleBulkTranscode(type) {
+  const store = type === "movie" ? movieStore : tvStore;
+  const flt = type === "movie" ? movieFilter : tvFilter;
+
+  // Select-all-matching path: use server-side bulk-by-filter endpoint
+  if (store.selectAllMatching) {
+    if (!confirm(`Queue ALL ${store.totalCount} matching items for transcoding?`)) return;
+    try {
+      const r = await fetch(`${API}/transcode/batch-by-filter`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ media_type: type, filter: { q: flt.text, status: flt.status } }),
+      });
+      const result = await r.json();
+      if (r.ok) {
+        store.selectAllMatching = false;
+        if (type === "movie") loadMovies(false); else loadTV(false);
+        updateWorkerStatus();
+      } else {
+        alert(`Failed to queue batch: ${result.error || "Unknown error"}`);
+      }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    return;
+  }
+
+  // Per-path path: existing behavior over loaded selection
   const sel = type === "movie" ? movieSelection : tvSelection;
   const displayed = type === "movie" ? displayedMovies : displayedTV;
   const eligible = displayed.filter(d => sel.has(d.path) && (d.status === "pending" || d.status === "ready") && !d.ignored);
@@ -1258,6 +1356,26 @@ async function handleBulkTranscode(type) {
 }
 
 async function handleBulkIgnore(type) {
+  const store = type === "movie" ? movieStore : tvStore;
+  const flt = type === "movie" ? movieFilter : tvFilter;
+
+  if (store.selectAllMatching) {
+    if (!confirm(`Ignore ALL ${store.totalCount} matching pending items?`)) return;
+    try {
+      const r = await fetch(`${API}/media/ignore-by-filter`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ media_type: type, filter: { q: flt.text, status: flt.status } }),
+      });
+      const result = await r.json();
+      if (r.ok) {
+        store.selectAllMatching = false;
+        if (type === "movie") loadMovies(false); else loadTV(false);
+      } else { alert(`Failed: ${result.error || "Unknown error"}`); }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    return;
+  }
+
   const sel = type === "movie" ? movieSelection : tvSelection;
   const displayed = type === "movie" ? displayedMovies : displayedTV;
   const eligible = displayed.filter(d => sel.has(d.path) && d.status === "pending" && !d.ignored);
@@ -1280,6 +1398,26 @@ async function handleBulkIgnore(type) {
 }
 
 async function handleBulkDelete(type) {
+  const store = type === "movie" ? movieStore : tvStore;
+  const flt = type === "movie" ? movieFilter : tvFilter;
+
+  if (store.selectAllMatching) {
+    if (!confirm(`Delete output files for ALL ${store.totalCount} matching ready items?\n\nCompanion files (.nfo, .srt, etc) will also be deleted. Source files are NOT affected.`)) return;
+    try {
+      const r = await fetch(`${API}/media/output-by-filter`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ media_type: type, filter: { q: flt.text, status: flt.status } }),
+      });
+      const result = await r.json();
+      if (r.ok) {
+        store.selectAllMatching = false;
+        if (type === "movie") loadMovies(true); else loadTV(true);
+      } else { alert(`Failed: ${result.error || "Unknown error"}`); }
+    } catch (e) { alert(`Error: ${e.message}`); }
+    return;
+  }
+
   const sel = type === "movie" ? movieSelection : tvSelection;
   const displayed = type === "movie" ? displayedMovies : displayedTV;
   const eligible = displayed.filter(d => sel.has(d.path) && d.status === "ready");
@@ -1423,40 +1561,88 @@ async function handleEnrichAll() {
   }
 }
 
-async function loadMovies(forceRefresh = false){
-  const body = $("#movies-body");
-  const refreshBtn = $("#refresh-movies");
+// ----- Pagination engine (Phase 2: server-side filter/sort + infinite scroll) -----
+const movieStore = { page: 0, pageSize: 50, totalCount: 0, hasMore: false, inflight: null, selectAllMatching: false, didReset: false };
+const tvStore    = { page: 0, pageSize: 50, totalCount: 0, hasMore: false, inflight: null, selectAllMatching: false, didReset: false };
 
-  // Show skeleton only on first load (empty table)
-  if (!body.innerHTML.trim() || body.querySelector(".skeleton-row")) {
-    body.innerHTML = moviesSkeleton();
+function _storeFor(type) { return type === "movie" ? movieStore : tvStore; }
+function _filterFor(type) { return type === "movie" ? movieFilter : tvFilter; }
+function _sortFor(type)   { return type === "movie" ? movieSort   : tvSort; }
+
+async function fetchPage(type, { reset = false, force = false } = {}) {
+  const store = _storeFor(type);
+  const f = _filterFor(type);
+  const s = _sortFor(type);
+  if (store.inflight) try { store.inflight.abort(); } catch {}
+
+  if (reset) {
+    store.page = 1;
+    store.didReset = true;
+    currentMediaItems[type === "movie" ? "movies" : "tv"] = [];
+    if (type === "movie") movieSelection.clear();
+    else tvSelection.clear();
+    store.selectAllMatching = false;
+    _updateSelectAllBanner(type);
+  } else {
+    if (!store.hasMore) return;
+    store.page = (store.page || 0) + 1;
   }
 
-  try{
-    const url = forceRefresh ? `${API}/media/movies?refresh=1` : `${API}/media/movies`;
-    const r = await fetch(url, {headers:{Accept:"application/json"}, cache:"no-store"});
-    if (!r.ok) { body.innerHTML = ""; return; }
+  const params = new URLSearchParams({
+    page: String(store.page),
+    page_size: String(store.pageSize),
+    status: f.status || "all",
+    sort: s.col || "mtime",
+    sort_order: s.dir || "desc",
+  });
+  if (f.text) params.set("q", f.text);
+  if (force) params.set("refresh", "1");
+
+  const url = `${API}/media/${type === "movie" ? "movies" : "tv"}?${params.toString()}`;
+  const ctrl = new AbortController();
+  store.inflight = ctrl;
+  const skelTarget = type === "movie" ? "#movies-body" : "#tv-body";
+  if (reset) {
+    const body = $(skelTarget);
+    if (body) body.innerHTML = type === "movie" ? moviesSkeleton() : tvSkeleton();
+  }
+
+  try {
+    const r = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store", signal: ctrl.signal });
+    if (!r.ok) return;
     const data = await r.json();
+    if (ctrl !== store.inflight) return; // a newer fetch superseded us
     const items = Array.isArray(data.items) ? data.items : [];
 
-    renderMoviesTable(items);
-
-    // Handle scanning state
-    const wasScanning = moviesScanning;
-    moviesScanning = data.scanning === true;
-
-    if (moviesScanning) {
-      refreshBtn.textContent = "Scanning...";
-      refreshBtn.disabled = true;
-    } else {
-      refreshBtn.textContent = "Refresh";
-      refreshBtn.disabled = false;
-      // If scan just finished, refresh to get updated data
-      if (wasScanning) {
-        setTimeout(() => loadMovies(false), 500);
-      }
+    // Append (or set on reset)
+    const arrKey = type === "movie" ? "movies" : "tv";
+    if (reset) currentMediaItems[arrKey] = items;
+    else {
+      // Dedup against existing loaded keys
+      const existing = new Set(currentMediaItems[arrKey].map(x => x.path));
+      for (const it of items) if (!existing.has(it.path)) currentMediaItems[arrKey].push(it);
     }
-  } catch { body.innerHTML = ""; }
+
+    store.totalCount = data.total_count || 0;
+    store.hasMore = data.has_more === true;
+
+    if (type === "movie") {
+      moviesScanning = data.scanning === true;
+      renderMoviesTable(currentMediaItems.movies);
+    } else {
+      tvScanning = data.scanning === true;
+      renderTVTable(currentMediaItems.tv);
+    }
+    _updateSelectAllBanner(type);
+  } catch (e) {
+    if (e.name !== "AbortError") console.error(`[fetchPage/${type}]`, e);
+  } finally {
+    if (ctrl === store.inflight) store.inflight = null;
+  }
+}
+
+async function loadMovies(forceRefresh = false){
+  return fetchPage("movie", { reset: true, force: !!forceRefresh });
 }
 
 function _tvRowSig(e) {
@@ -1558,6 +1744,83 @@ function _wireTVRow(tr, item) {
   }
 }
 
+function _tvTileSig(e) { return _tvRowSig(e); }
+
+function _buildTVTileHtml(e) {
+  const rowClass = e.status === "processing" ? "processing-row" : e.status === "queued" ? "queued-row" : e.status === "pending" ? "pending-row" : "";
+  const ignoredClass = e.ignored ? " ignored-row" : "";
+  const checked = tvSelection.has(e.path) ? "checked" : "";
+  const key = encodeURIComponent(e.path);
+
+  let epLabel = "";
+  if (e.season != null && e.episode != null) {
+    const s = String(e.season).padStart(2, "0");
+    if (e.episodes && e.episodes.length > 1) {
+      const first = String(e.episodes[0]).padStart(2, "0");
+      const last = String(e.episodes[e.episodes.length - 1]).padStart(2, "0");
+      epLabel = `S${s}E${first}-E${last}`;
+    } else {
+      epLabel = `S${s}E${String(e.episode).padStart(2, "0")}`;
+    }
+  }
+
+  let statusPill = "";
+  if (e.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round((e.progress || 0) * 100)}%</span>`;
+  else if (e.status === "queued") statusPill = `<span class="tile-status-pill" style="background:rgba(139,92,246,.85)">Queued</span>`;
+  else if (e.status === "pending") statusPill = `<span class="tile-status-pill" style="background:rgba(245,158,11,.85)">Pending</span>`;
+  else if (e.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round((e.reencode_progress || 0) * 100)}%</span>`;
+  else if (e.ignored) statusPill = `<span class="tile-status-pill" style="background:rgba(120,120,120,.85)">Ignored</span>`;
+
+  let progressOverlay = "";
+  if (e.status === "processing") {
+    const pct = Math.round((e.progress || 0) * 100);
+    progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>${pct}%</span><span>${e.elapsed_fmt || ""}</span></div></div>`;
+  } else if (e.status === "re-encoding") {
+    const pct = Math.round((e.reencode_progress || 0) * 100);
+    progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>Re-encode ${pct}%</span><span>${e.reencode_elapsed_fmt || ""}</span></div></div>`;
+  }
+
+  const posterContent = e.poster
+    ? `<img src="${e.poster}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="tile-no-poster">${e.show || "No poster"}</div>`;
+
+  const showTitle = e.show || "-";
+  const epTitle = e.title || "";
+  const subtitle = [epLabel, fmtRes(e.resolution), e.size_gb != null ? `${e.size_gb.toFixed(1)} GB` : null].filter(Boolean).join(" · ");
+
+  return `
+    <div class="media-tile ${rowClass}${ignoredClass}" data-row-key="${key}">
+      <div class="tile-poster-area">
+        <input type="checkbox" class="tile-checkbox row-select" ${checked} title="Select">
+        ${statusPill}
+        ${posterContent}
+        ${progressOverlay}
+      </div>
+      <div class="tile-body">
+        <div class="tile-title title-clickable" title="${showTitle.replace(/"/g, "&quot;")}">${showTitle}</div>
+        ${epTitle ? `<div class="tile-meta" style="color:var(--text)">${epTitle}</div>` : ""}
+        ${subtitle ? `<div class="tile-meta">${subtitle}</div>` : ""}
+        <div class="tile-actions">${actionHtml(e, "tv", "")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function _renderTVTiles(displayed, items) {
+  const grid = $("#tv-tile-grid");
+  if (!grid) return;
+  if (displayed.length === 0) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;color:var(--text-muted);text-align:center;padding:40px">${items.length === 0 ? "No TV shows found" : "No matches"}</div>`;
+    return;
+  }
+  patchTableRows(grid, displayed, {
+    keyFn: e => e.path,
+    sigFn: _tvTileSig,
+    buildRowFn: _buildTVTileHtml,
+    wireRowFn: _wireTVRow,
+  });
+}
+
 function renderTVTable(items) {
   const body = $("#tv-body");
   const thead = $("#tv-thead");
@@ -1580,7 +1843,7 @@ function renderTVTable(items) {
         if (tvSort.col === col) tvSort.dir = tvSort.dir === "asc" ? "desc" : "asc";
         else { tvSort.col = col; tvSort.dir = "asc"; }
         _tvTheadHtml = "";
-        renderTVTable(currentMediaItems.tv);
+        fetchPage("tv", { reset: true });
       });
     });
     const selectAll = thead.querySelector(".select-all");
@@ -1596,6 +1859,7 @@ function renderTVTable(items) {
 
   if (displayed.length === 0) {
     body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px">${items.length === 0 ? "No TV shows found" : "No matches"}</td></tr>`;
+    _renderTVTiles(displayed, items);
     updateBulkActionBar("tv");
     updateSelectAllState("tv");
     return;
@@ -1610,42 +1874,19 @@ function renderTVTable(items) {
     wireRowFn: _wireTVRow,
   });
 
+  _renderTVTiles(displayed, items);
+
   updateBulkActionBar("tv");
   updateSelectAllState("tv");
 }
 
 async function loadTV(forceRefresh = false){
-  const body = $("#tv-body");
-  const refreshBtn = $("#refresh-tv");
-
-  if (!body.innerHTML.trim() || body.querySelector(".skeleton-row")) {
-    body.innerHTML = tvSkeleton();
-  }
-
-  try{
-    const url = forceRefresh ? `${API}/media/tv?refresh=1` : `${API}/media/tv`;
-    const r = await fetch(url, {headers:{Accept:"application/json"}, cache:"no-store"});
-    if (!r.ok) { body.innerHTML = ""; return; }
-    const data = await r.json();
-    const items = Array.isArray(data.items) ? data.items : [];
-
-    renderTVTable(items);
-
-    const wasScanning = tvScanning;
-    tvScanning = data.scanning === true;
-
-    if (tvScanning) {
-      refreshBtn.textContent = "Scanning...";
-      refreshBtn.disabled = true;
-    } else {
-      refreshBtn.textContent = "Refresh";
-      refreshBtn.disabled = false;
-      if (wasScanning) {
-        setTimeout(() => loadTV(false), 500);
-      }
-    }
-  } catch { body.innerHTML = ""; }
+  return fetchPage("tv", { reset: true, force: !!forceRefresh });
 }
+
+// Stub — real implementation assigned later in the IIFE kickoff. Declared as a
+// function declaration so it's hoisted and safe to call before the kickoff runs.
+function _updateSelectAllBanner(type) { /* no-op until kickoff installs real impl */ }
   $("#refresh-movies").addEventListener("click", () => loadMovies(true));
   $("#refresh-tv").addEventListener("click", () => loadTV(true));
   const _enrichAllMovies = $("#enrich-all-movies");
@@ -1653,18 +1894,18 @@ async function loadTV(forceRefresh = false){
   const _enrichAllTV = $("#enrich-all-tv");
   if (_enrichAllTV) _enrichAllTV.addEventListener("click", () => handleEnrichAll());
 
-  // ----- Filter event listeners -----
+  // ----- Filter event listeners (debounced server-side fetch) -----
   let _movieSearchTimer = null;
   $("#movie-search").addEventListener("input", (e) => {
     clearTimeout(_movieSearchTimer);
     _movieSearchTimer = setTimeout(() => {
       movieFilter.text = e.target.value.trim();
-      renderMoviesTable(currentMediaItems.movies);
-    }, 200);
+      fetchPage("movie", { reset: true });
+    }, 250);
   });
   $("#movie-status-filter").addEventListener("change", (e) => {
     movieFilter.status = e.target.value;
-    renderMoviesTable(currentMediaItems.movies);
+    fetchPage("movie", { reset: true });
   });
 
   let _tvSearchTimer = null;
@@ -1672,12 +1913,25 @@ async function loadTV(forceRefresh = false){
     clearTimeout(_tvSearchTimer);
     _tvSearchTimer = setTimeout(() => {
       tvFilter.text = e.target.value.trim();
-      renderTVTable(currentMediaItems.tv);
-    }, 200);
+      fetchPage("tv", { reset: true });
+    }, 250);
   });
   $("#tv-status-filter").addEventListener("change", (e) => {
     tvFilter.status = e.target.value;
-    renderTVTable(currentMediaItems.tv);
+    fetchPage("tv", { reset: true });
+  });
+
+  // Tile-mode sort dropdowns
+  $$(".tile-sort-select").forEach(sel => {
+    sel.addEventListener("change", (e) => {
+      const target = sel.dataset.sortTarget;
+      const [col, dir] = e.target.value.split(":");
+      const sortObj = target === "movie" ? movieSort : tvSort;
+      sortObj.col = col;
+      sortObj.dir = dir;
+      _moviesTheadHtml = ""; _tvTheadHtml = "";  // force thead re-render so arrows update on next table view
+      fetchPage(target, { reset: true });
+    });
   });
 
   // ----- Bulk action button listeners -----
@@ -3667,33 +3921,71 @@ async function loadTV(forceRefresh = false){
   }
 
   // ----- SSE delta appliers -----
-  function _applyMoviesDelta(d) {
-    const map = new Map();
-    for (const item of currentMediaItems.movies) map.set(item.path, item);
-    for (const item of (d.changed || [])) map.set(item.path, item);
-    for (const path of (d.removed || [])) map.delete(path);
-    moviesScanning = d.scanning === true;
-    const refreshBtn = $("#refresh-movies");
-    if (refreshBtn) {
-      refreshBtn.textContent = moviesScanning ? "Scanning..." : "Refresh";
-      refreshBtn.disabled = !!moviesScanning;
+  function _overlayDelta(arrKey, d) {
+    // Phase 4: SSE only carries in-flight items. Overlay onto loaded REST pages.
+    // - If item.path is in loadedKeys → update in place (live progress)
+    // - If item is in-flight AND not yet loaded → prepend (newly queued)
+    // - Otherwise → ignore (outside loaded pages or already-completed)
+    const arr = currentMediaItems[arrKey];
+    const loadedKeys = new Set(arr.map(x => x.path));
+    let mutated = false;
+    for (const item of (d.changed || [])) {
+      const idx = arr.findIndex(x => x.path === item.path);
+      if (idx !== -1) {
+        arr[idx] = item;
+        mutated = true;
+      } else if (item.status === "pending" || item.status === "queued" ||
+                 item.status === "processing" || item.status === "re-encoding") {
+        arr.unshift(item);
+        loadedKeys.add(item.path);
+        mutated = true;
+      }
     }
-    renderMoviesTable(Array.from(map.values()));
+    for (const path of (d.removed || [])) {
+      const idx = arr.findIndex(x => x.path === path);
+      if (idx !== -1) {
+        arr.splice(idx, 1);
+        mutated = true;
+      }
+    }
+    return mutated;
+  }
+
+  function _applyMoviesDelta(d) {
+    if (_overlayDelta("movies", d)) renderMoviesTable(currentMediaItems.movies);
   }
 
   function _applyTVDelta(d) {
-    const map = new Map();
-    for (const item of currentMediaItems.tv) map.set(item.path, item);
-    for (const item of (d.changed || [])) map.set(item.path, item);
-    for (const path of (d.removed || [])) map.delete(path);
-    tvScanning = d.scanning === true;
-    const refreshBtn = $("#refresh-tv");
-    if (refreshBtn) {
-      refreshBtn.textContent = tvScanning ? "Scanning..." : "Refresh";
-      refreshBtn.disabled = !!tvScanning;
-    }
-    renderTVTable(Array.from(map.values()));
+    if (_overlayDelta("tv", d)) renderTVTable(currentMediaItems.tv);
   }
+
+  function _applyCacheProgress(d) {
+    moviesScanning = d.movies_scanning === true;
+    tvScanning = d.tv_scanning === true;
+    const refreshM = $("#refresh-movies");
+    if (refreshM) {
+      refreshM.textContent = moviesScanning ? `Scanning (${d.movies_count || 0})…` : "Refresh";
+      refreshM.disabled = !!moviesScanning;
+    }
+    const refreshT = $("#refresh-tv");
+    if (refreshT) {
+      refreshT.textContent = tvScanning ? `Scanning (${d.tv_count || 0})…` : "Refresh";
+      refreshT.disabled = !!tvScanning;
+    }
+    // When a scan transitions from scanning → done, refetch the current view so newly cached items appear
+    if (d._wasMoviesScanning === true && !moviesScanning) fetchPage("movie", { reset: true });
+    if (d._wasTVScanning     === true && !tvScanning)     fetchPage("tv",    { reset: true });
+  }
+  // Track scanning state across cache_progress events to detect "scan finished" transitions
+  let _lastMoviesScanning = null, _lastTVScanning = null;
+  const _origApplyCacheProgress = _applyCacheProgress;
+  _applyCacheProgress = function (d) {
+    d._wasMoviesScanning = _lastMoviesScanning;
+    d._wasTVScanning = _lastTVScanning;
+    _lastMoviesScanning = d.movies_scanning === true;
+    _lastTVScanning = d.tv_scanning === true;
+    _origApplyCacheProgress(d);
+  };
 
   function _applyStatus(d) {
     const running = (d.status || d.running) === "running" || d.running === true;
@@ -3770,6 +4062,7 @@ async function loadTV(forceRefresh = false){
   openStream("/events/media", {
     movies_delta: _applyMoviesDelta,
     tv_delta: _applyTVDelta,
+    cache_progress: _applyCacheProgress,
   }, () => {
     setInterval(pollScanStatus, 2000);
     setInterval(pollProcessing, 3000);
@@ -3799,4 +4092,122 @@ async function loadTV(forceRefresh = false){
   };
 
   setInterval(loadStorageHistory, 300000); // Storage history every 5 min — left as polling, changes too rarely to bother with SSE
+
+  // ----- View toggle (table ↔ tile) with localStorage persistence -----
+  function _applyViewMode(target, mode) {
+    const tableWrap = $(`#${target === "movie" ? "movies" : "tv"}-table-wrap`);
+    const tileGrid  = $(`#${target === "movie" ? "movies" : "tv"}-tile-grid`);
+    if (!tableWrap || !tileGrid) return;
+    const showTiles = mode === "tile";
+    tableWrap.classList.toggle("hidden", showTiles);
+    tileGrid.classList.toggle("hidden", !showTiles);
+    // Update toggle button active state
+    $$(`.view-toggle-group[data-view-target="${target}"] .view-toggle`).forEach(b => {
+      b.classList.toggle("active", b.dataset.view === mode);
+    });
+  }
+
+  function _setViewMode(target, mode) {
+    try { localStorage.setItem(`transcodarr_${target}_view`, mode); } catch {}
+    _applyViewMode(target, mode);
+  }
+
+  function _initViewMode(target) {
+    let mode = "table";
+    try { mode = localStorage.getItem(`transcodarr_${target}_view`) || "table"; } catch {}
+    _applyViewMode(target, mode);
+  }
+
+  $$(".view-toggle-group").forEach(group => {
+    const target = group.dataset.viewTarget;
+    group.querySelectorAll(".view-toggle").forEach(btn => {
+      btn.addEventListener("click", () => _setViewMode(target, btn.dataset.view));
+    });
+  });
+
+  _initViewMode("movie");
+  _initViewMode("tv");
+
+  // ----- Show/hide tile sort dropdown based on active view -----
+  function _syncTileSortVisibility(target, mode) {
+    const sel = $(`.tile-sort-select[data-sort-target="${target}"]`);
+    if (sel) sel.classList.toggle("hidden", mode !== "tile");
+    if (sel && mode === "tile") {
+      const sortObj = target === "movie" ? movieSort : tvSort;
+      sel.value = `${sortObj.col}:${sortObj.dir}`;
+    }
+  }
+  // Hook view-toggle clicks (additive — runs alongside _setViewMode)
+  $$(".view-toggle-group").forEach(group => {
+    const target = group.dataset.viewTarget;
+    group.querySelectorAll(".view-toggle").forEach(btn => {
+      btn.addEventListener("click", () => _syncTileSortVisibility(target, btn.dataset.view));
+    });
+  });
+  // Apply on init
+  ["movie", "tv"].forEach(t => {
+    let mode = "table";
+    try { mode = localStorage.getItem(`transcodarr_${t}_view`) || "table"; } catch {}
+    _syncTileSortVisibility(t, mode);
+  });
+
+  // ----- Select-all-matching banner -----
+  _updateSelectAllBanner = function (type) {
+    const store = _storeFor(type);
+    const sel = type === "movie" ? movieSelection : tvSelection;
+    const banner = $(`#${type}-select-all-banner`);
+    if (!banner) return;
+    const totalLoaded = (type === "movie" ? currentMediaItems.movies : currentMediaItems.tv).length;
+    const allLoadedSelected = totalLoaded > 0 && sel.size >= totalLoaded;
+    const hasMoreThanLoaded = store.totalCount > totalLoaded;
+    const showBanner = allLoadedSelected && hasMoreThanLoaded && !store.selectAllMatching;
+    const showActive = store.selectAllMatching;
+    banner.classList.toggle("hidden", !showBanner && !showActive);
+    const textEl = banner.querySelector(".banner-text");
+    const selBtn = banner.querySelector('[data-action="select-all-matching"]');
+    const clrBtn = banner.querySelector('[data-action="clear-select-matching"]');
+    if (showActive) {
+      textEl.textContent = `All ${store.totalCount} matching items will be acted on by bulk operations.`;
+      selBtn.classList.add("hidden");
+      clrBtn.classList.remove("hidden");
+    } else if (showBanner) {
+      textEl.textContent = `${sel.size} selected. ${store.totalCount - totalLoaded} more match this filter.`;
+      selBtn.classList.remove("hidden");
+      clrBtn.classList.add("hidden");
+      selBtn.textContent = `Select all ${store.totalCount} matching`;
+    }
+  };
+  $$(".select-all-matching-banner").forEach(banner => {
+    banner.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const target = btn.dataset.target;
+      const store = _storeFor(target);
+      if (btn.dataset.action === "select-all-matching") {
+        store.selectAllMatching = true;
+      } else if (btn.dataset.action === "clear-select-matching") {
+        store.selectAllMatching = false;
+        if (target === "movie") movieSelection.clear();
+        else tvSelection.clear();
+      }
+      if (target === "movie") renderMoviesTable(currentMediaItems.movies);
+      else renderTVTable(currentMediaItems.tv);
+      _updateSelectAllBanner(target);
+    });
+  });
+
+  // ----- IntersectionObserver for infinite scroll -----
+  function _wireSentinel(target) {
+    const el = $(`.paging-sentinel[data-paging-target="${target}"]`);
+    if (!el) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        const store = _storeFor(target);
+        if (store.hasMore && !store.inflight) fetchPage(target, { reset: false });
+      }
+    }, { rootMargin: "400px" });
+    observer.observe(el);
+  }
+  _wireSentinel("movie");
+  _wireSentinel("tv");
 })();

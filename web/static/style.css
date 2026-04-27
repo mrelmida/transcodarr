@@ -862,3 +862,109 @@ th.sort-active{color:var(--accent)}
   .chart-modal{max-width:98%;width:98%}
   .chart-modal-chart{height:280px}
 }
+/* ----- View toggle (table vs tile) ----- */
+.view-toggle-group{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-right:6px}
+.view-toggle{
+  background:transparent;border:none;color:var(--text-muted);
+  padding:5px 10px;font-size:14px;cursor:pointer;line-height:1;
+  border-right:1px solid var(--border);
+}
+.view-toggle:last-child{border-right:none}
+.view-toggle:hover{color:var(--text);background:var(--bg-hover)}
+.view-toggle.active{background:rgba(90,169,255,.15);color:var(--accent)}
+
+/* ----- Media tile grid ----- */
+.media-tile-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:14px;padding:14px;
+}
+.media-tile-grid.hidden{display:none}
+.table-wrap.hidden{display:none}
+
+.media-tile{
+  background:var(--bg-card);border:1px solid var(--border);
+  border-radius:10px;overflow:hidden;display:flex;flex-direction:column;
+  transition:border-color .12s,transform .12s;
+  position:relative;
+}
+.media-tile:hover{border-color:var(--accent)}
+.media-tile.processing-row{border-color:var(--accent)}
+.media-tile.queued-row{border-color:var(--accent-2)}
+.media-tile.pending-row{border-color:rgba(245,158,11,.5)}
+.media-tile.ignored-row{opacity:.45}
+
+.media-tile .tile-poster-area{
+  position:relative;width:100%;aspect-ratio:2/3;background:var(--bg);overflow:hidden;
+}
+.media-tile .tile-poster-area img{
+  width:100%;height:100%;object-fit:cover;display:block;
+}
+.media-tile .tile-poster-area .tile-no-poster{
+  display:flex;align-items:center;justify-content:center;width:100%;height:100%;
+  color:var(--text-muted);font-size:11px;text-align:center;padding:10px;
+}
+.media-tile .tile-checkbox{
+  position:absolute;top:6px;left:6px;z-index:2;
+  width:18px;height:18px;cursor:pointer;
+  accent-color:var(--accent);
+  background:rgba(0,0,0,.6);border-radius:3px;
+}
+.media-tile .tile-status-pill{
+  position:absolute;top:6px;right:6px;z-index:2;
+  font-size:10px;padding:3px 7px;border-radius:999px;
+  background:rgba(0,0,0,.7);color:#fff;font-weight:500;
+  text-transform:uppercase;letter-spacing:.3px;
+}
+.media-tile .tile-progress-overlay{
+  position:absolute;left:0;right:0;bottom:0;z-index:2;
+  background:rgba(0,0,0,.75);padding:6px 8px;
+}
+.media-tile .tile-progress-bar{
+  height:4px;background:rgba(255,255,255,.15);border-radius:2px;overflow:hidden;
+}
+.media-tile .tile-progress-bar > div{
+  height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));
+  transition:width .3s;
+}
+.media-tile .tile-progress-text{
+  font-size:10px;color:#fff;margin-top:3px;display:flex;justify-content:space-between;
+}
+.media-tile .tile-body{padding:10px 11px;display:flex;flex-direction:column;gap:5px;flex:1}
+.media-tile .tile-title{
+  font-size:13px;font-weight:600;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.25;cursor:pointer;
+}
+.media-tile .tile-title:hover{color:var(--accent)}
+.media-tile .tile-meta{
+  font-size:11px;color:var(--text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.media-tile .tile-actions{
+  display:flex;gap:5px;flex-wrap:wrap;margin-top:auto;padding-top:6px;
+}
+.media-tile .tile-actions .btn{padding:4px 8px;font-size:11px}
+
+/* ----- Pagination sentinel + select-all-matching banner + tile sort -----*/
+.paging-sentinel{height:1px;width:100%}
+.tile-sort-select{
+  background:var(--bg-card);border:1px solid var(--border);color:var(--text);
+  padding:5px 10px;border-radius:8px;font-size:12px;cursor:pointer;
+}
+.tile-sort-select.hidden{display:none}
+.select-all-matching-banner{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px;background:rgba(90,169,255,.1);border-top:1px solid var(--border);
+  font-size:13px;color:var(--text);
+}
+.select-all-matching-banner.hidden{display:none}
+.select-all-matching-banner .banner-text{flex:1}
+.btn-link{
+  background:transparent !important;border:none !important;color:var(--accent) !important;
+  padding:2px 6px !important;text-decoration:underline;cursor:pointer;font-size:12px;
+}
+.btn-link:hover{color:var(--accent-2) !important}
+
+/* Loading indicator while fetching next page */
+.paging-loading{padding:14px;text-align:center;color:var(--text-muted);font-size:12px}

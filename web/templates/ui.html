@@ -100,11 +100,25 @@
                     <button class="btn btn-sm btn-ignore bulk-ignore" data-type="movie">Ignore</button>
                     <button class="btn btn-sm btn-stop bulk-delete" data-type="movie">Delete</button>
                   </div>
+                  <select class="tile-sort-select hidden" data-sort-target="movie" title="Sort">
+                    <option value="mtime:desc">Newest</option>
+                    <option value="mtime:asc">Oldest</option>
+                    <option value="title:asc">Title A-Z</option>
+                    <option value="title:desc">Title Z-A</option>
+                    <option value="size_gb:desc">Largest</option>
+                    <option value="size_gb:asc">Smallest</option>
+                    <option value="year:desc">Year (new)</option>
+                    <option value="year:asc">Year (old)</option>
+                  </select>
+                  <div class="view-toggle-group" data-view-target="movie">
+                    <button class="view-toggle active" data-view="table" title="Table view" aria-label="Table view">&#9776;</button>
+                    <button class="view-toggle" data-view="tile" title="Tile view" aria-label="Tile view">&#9783;</button>
+                  </div>
                   <button id="enrich-all-movies" class="btn btn-ghost">Enrich All</button>
                   <button id="refresh-movies" class="btn btn-ghost">Refresh</button>
                 </div>
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap" id="movies-table-wrap">
                 <table class="tbl">
                   <thead id="movies-thead">
                     <tr></tr>
@@ -113,6 +127,15 @@
                     <!-- filled by JS -->
                   </tbody>
                 </table>
+              </div>
+              <div class="media-tile-grid hidden" id="movies-tile-grid">
+                <!-- filled by JS -->
+              </div>
+              <div class="paging-sentinel" data-paging-target="movie"></div>
+              <div class="select-all-matching-banner hidden" id="movie-select-all-banner">
+                <span class="banner-text"></span>
+                <button class="btn btn-sm btn-link" data-action="select-all-matching" data-target="movie">Select all matching</button>
+                <button class="btn btn-sm btn-link" data-action="clear-select-matching" data-target="movie">Clear</button>
               </div>
             </div>
           </div>
@@ -140,11 +163,23 @@
                     <button class="btn btn-sm btn-ignore bulk-ignore" data-type="tv">Ignore</button>
                     <button class="btn btn-sm btn-stop bulk-delete" data-type="tv">Delete</button>
                   </div>
+                  <select class="tile-sort-select hidden" data-sort-target="tv" title="Sort">
+                    <option value="mtime:desc">Newest</option>
+                    <option value="mtime:asc">Oldest</option>
+                    <option value="show:asc">Show A-Z</option>
+                    <option value="show:desc">Show Z-A</option>
+                    <option value="size_gb:desc">Largest</option>
+                    <option value="size_gb:asc">Smallest</option>
+                  </select>
+                  <div class="view-toggle-group" data-view-target="tv">
+                    <button class="view-toggle active" data-view="table" title="Table view" aria-label="Table view">&#9776;</button>
+                    <button class="view-toggle" data-view="tile" title="Tile view" aria-label="Tile view">&#9783;</button>
+                  </div>
                   <button id="enrich-all-tv" class="btn btn-ghost">Enrich All</button>
                   <button id="refresh-tv" class="btn btn-ghost">Refresh</button>
                 </div>
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap" id="tv-table-wrap">
                 <table class="tbl">
                   <thead id="tv-thead">
                     <tr></tr>
@@ -153,6 +188,15 @@
                     <!-- filled by JS -->
                   </tbody>
                 </table>
+              </div>
+              <div class="media-tile-grid hidden" id="tv-tile-grid">
+                <!-- filled by JS -->
+              </div>
+              <div class="paging-sentinel" data-paging-target="tv"></div>
+              <div class="select-all-matching-banner hidden" id="tv-select-all-banner">
+                <span class="banner-text"></span>
+                <button class="btn btn-sm btn-link" data-action="select-all-matching" data-target="tv">Select all matching</button>
+                <button class="btn btn-sm btn-link" data-action="clear-select-matching" data-target="tv">Clear</button>
               </div>
             </div>
           </div>
