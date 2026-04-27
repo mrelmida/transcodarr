@@ -4218,4 +4218,20 @@ function _updateSelectAllBanner(type) { /* no-op until kickoff installs real imp
   }
   _wireSentinel("movie");
   _wireSentinel("tv");
+
+  // ----- Scroll-to-top floating button -----
+  const _scrollTopBtn = $("#scroll-top-btn");
+  if (_scrollTopBtn) {
+    let _scrollTopRaf = null;
+    const _updateScrollTopBtn = () => {
+      _scrollTopRaf = null;
+      _scrollTopBtn.classList.toggle("hidden", window.scrollY < 300);
+    };
+    window.addEventListener("scroll", () => {
+      if (!_scrollTopRaf) _scrollTopRaf = requestAnimationFrame(_updateScrollTopBtn);
+    }, { passive: true });
+    _scrollTopBtn.addEventListener("click", () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
 })();

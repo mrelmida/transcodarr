@@ -1097,3 +1097,17 @@ th.sort-active{color:var(--accent)}
   .view-toggle { padding: 4px 8px; font-size: 13px; }
   .tile-sort-select { padding: 4px 8px; font-size: 11px; }
 }
+
+/* ----- Scroll-to-top floating button (visible after ~300px of scroll) ----- */
+.scroll-top-btn {
+  position: fixed; bottom: 20px; right: 20px;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--accent); color: white; border: none;
+  font-size: 22px; font-weight: bold; line-height: 1; cursor: pointer;
+  z-index: 150; box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity .2s ease, transform .15s ease, background .15s;
+}
+.scroll-top-btn:hover { background: var(--accent-2); transform: translateY(-2px); }
+.scroll-top-btn:active { transform: translateY(0); }
+.scroll-top-btn.hidden { opacity: 0; pointer-events: none; transform: translateY(8px); }

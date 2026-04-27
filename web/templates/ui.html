@@ -323,6 +323,8 @@
     </div>
   </div>
 
+  <button id="scroll-top-btn" class="scroll-top-btn hidden" aria-label="Scroll to top" title="Scroll to top">&uarr;</button>
+
   <script>
     window.API_BASE = "{{ api_base | default('/api') }}";
     window.UI_BOOT  = {{ (ui_boot or {}) | tojson }};
