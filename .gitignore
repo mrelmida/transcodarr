@@ -22,6 +22,7 @@ __pycache__/
 build/
 dist/
 /web/cache/
+/screenshots/
 /prompt.txt
 /reply.txt
 /Graphana-Skill.md

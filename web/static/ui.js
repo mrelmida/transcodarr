@@ -4114,7 +4114,11 @@ function _updateSelectAllBanner(type) { /* no-op until kickoff installs real imp
 
   function _initViewMode(target) {
     let mode = "table";
-    try { mode = localStorage.getItem(`transcodarr_${target}_view`) || "table"; } catch {}
+    try {
+      const saved = localStorage.getItem(`transcodarr_${target}_view`);
+      if (saved) mode = saved;
+      else if (window.innerWidth < 768) mode = "tile";   // phones get tiles by default
+    } catch {}
     _applyViewMode(target, mode);
   }
 
@@ -4144,10 +4148,14 @@ function _updateSelectAllBanner(type) { /* no-op until kickoff installs real imp
       btn.addEventListener("click", () => _syncTileSortVisibility(target, btn.dataset.view));
     });
   });
-  // Apply on init
+  // Apply on init — must match the same default logic as _initViewMode (auto-tile on phones)
   ["movie", "tv"].forEach(t => {
     let mode = "table";
-    try { mode = localStorage.getItem(`transcodarr_${t}_view`) || "table"; } catch {}
+    try {
+      const saved = localStorage.getItem(`transcodarr_${t}_view`);
+      if (saved) mode = saved;
+      else if (window.innerWidth < 768) mode = "tile";
+    } catch {}
     _syncTileSortVisibility(t, mode);
   });
 
