@@ -12,8 +12,13 @@ from sse_starlette.sse import EventSourceResponse
 from web.shared_state import (
     compute_movies_view, compute_tv_view, maybe_trigger_background_scan,
     read_log_tail, is_running_lock,
+    scan_pending_movies, scan_pending_tv,
+    scan_processing_movies, scan_processing_tv,
+    scan_reencode_progress,
+    get_media_cache,
     _stats_lock, _stats_timestamps, _cpu_history, _ram_history,
 )
+from pathlib import Path
 
 router = APIRouter()
 
@@ -74,15 +79,41 @@ async def events_status(request: Request):
     return EventSourceResponse(gen(), ping=PING_INTERVAL)
 
 
+def _compute_inflight_movies(s):
+    """Just the in-flight items: pending + processing + queued + re-encoding.
+    Bulk library is served via paginated REST, not this stream."""
+    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
+    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
+    items = []
+    if watch_root:
+        items += scan_pending_movies(watch_root, temp_root)
+    if temp_root:
+        items += scan_processing_movies(temp_root, watch_root)
+    return items
+
+
+def _compute_inflight_tv(s):
+    watch_root = Path(s.WATCH_FOLDER) if s.WATCH_FOLDER else None
+    temp_root = Path(s.MEDIA_TEMP_FOLDER) if s.MEDIA_TEMP_FOLDER else None
+    items = []
+    if watch_root:
+        items += scan_pending_tv(watch_root, temp_root)
+    if temp_root:
+        items += scan_processing_tv(temp_root, watch_root)
+    return items
+
+
 @router.get("/events/media")
 async def events_media(request: Request):
-    """Stream movies/tv table deltas + scanning state. ~2s tick."""
+    """Stream IN-FLIGHT items only (~10-20 max regardless of library size).
+
+    Bulk library is paginated REST (/api/media/movies?page=...). Frontend overlays
+    these deltas onto the loaded REST pages. cache_progress event reports scan state.
+    """
     async def gen():
         last_movies = {}
         last_tv = {}
-        last_scanning_movies = None
-        last_scanning_tv = None
-        first_run = True
+        last_progress = None
         s = request.app.state.settings
 
         try:
@@ -91,47 +122,41 @@ async def events_media(request: Request):
         except Exception:
             pass
 
+        # Empty hello event so the client sees the stream is alive
+        yield {"event": "movies_delta", "data": json.dumps({"changed": [], "removed": []})}
+        yield {"event": "tv_delta", "data": json.dumps({"changed": [], "removed": []})}
+
         while True:
             if await request.is_disconnected():
                 break
             try:
-                # File I/O happens in a thread to avoid blocking the event loop
-                movies_items, movies_scanning = await asyncio.to_thread(compute_movies_view, s)
-                tv_items, tv_scanning = await asyncio.to_thread(compute_tv_view, s)
+                movies_items = await asyncio.to_thread(_compute_inflight_movies, s)
+                tv_items = await asyncio.to_thread(_compute_inflight_tv, s)
 
                 curr_movies = _index_by_path(movies_items)
                 curr_tv = _index_by_path(tv_items)
 
-                if first_run:
-                    yield {"event": "movies_delta", "data": json.dumps({
-                        "changed": list(curr_movies.values()),
-                        "removed": [],
-                        "scanning": movies_scanning,
-                    })}
-                    yield {"event": "tv_delta", "data": json.dumps({
-                        "changed": list(curr_tv.values()),
-                        "removed": [],
-                        "scanning": tv_scanning,
-                    })}
+                movies_diff = _diff_items(last_movies, curr_movies)
+                if movies_diff["changed"] or movies_diff["removed"]:
+                    yield {"event": "movies_delta", "data": json.dumps(movies_diff)}
                     last_movies = curr_movies
-                    last_tv = curr_tv
-                    last_scanning_movies = movies_scanning
-                    last_scanning_tv = tv_scanning
-                    first_run = False
-                else:
-                    movies_diff = _diff_items(last_movies, curr_movies)
-                    if movies_diff["changed"] or movies_diff["removed"] or movies_scanning != last_scanning_movies:
-                        movies_diff["scanning"] = movies_scanning
-                        yield {"event": "movies_delta", "data": json.dumps(movies_diff)}
-                        last_movies = curr_movies
-                        last_scanning_movies = movies_scanning
 
-                    tv_diff = _diff_items(last_tv, curr_tv)
-                    if tv_diff["changed"] or tv_diff["removed"] or tv_scanning != last_scanning_tv:
-                        tv_diff["scanning"] = tv_scanning
-                        yield {"event": "tv_delta", "data": json.dumps(tv_diff)}
-                        last_tv = curr_tv
-                        last_scanning_tv = tv_scanning
+                tv_diff = _diff_items(last_tv, curr_tv)
+                if tv_diff["changed"] or tv_diff["removed"]:
+                    yield {"event": "tv_delta", "data": json.dumps(tv_diff)}
+                    last_tv = curr_tv
+
+                # Cache scan progress (movies + tv combined)
+                cache = get_media_cache()
+                progress = {
+                    "movies_scanning": cache["movies"]["scanning"],
+                    "movies_count":    len(cache["movies"]["items"]),
+                    "tv_scanning":     cache["tv"]["scanning"],
+                    "tv_count":        len(cache["tv"]["items"]),
+                }
+                if progress != last_progress:
+                    yield {"event": "cache_progress", "data": json.dumps(progress)}
+                    last_progress = progress
 
                 # Periodically refresh the cache; same 60s threshold as the REST handler
                 try:

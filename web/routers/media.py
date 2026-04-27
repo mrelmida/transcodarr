@@ -34,13 +34,25 @@ def api_media_movies(
     refresh: str = Query(default=""),
     sort: str = Query(default=""),
     sort_order: str = Query(default="asc"),
+    status: str = Query(default="all"),
+    page: int = Query(default=0),
+    page_size: int = Query(default=0),
 ):
-    """Return cached movies instantly, trigger background refresh if needed."""
+    """Return cached movies. Pagination via page+page_size (both default 0 = return all)."""
     s = request.app.state.settings
     items, scanning = compute_movies_view(s)
     maybe_trigger_background_scan(s, "movies", force=(refresh == "1"))
-    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
-    return {"items": items, "count": len(items), "scanning": scanning}
+    items, total = apply_filters(
+        items, q=q, limit=limit, sort=sort, sort_order=sort_order,
+        status=status, page=page, page_size=page_size,
+    )
+    return {
+        "items": items, "count": len(items),
+        "total_count": total,
+        "page": page, "page_size": page_size,
+        "has_more": page > 0 and page_size > 0 and (page * page_size) < total,
+        "scanning": scanning,
+    }
 
 
 @router.get("/media/tv")
@@ -51,13 +63,25 @@ def api_media_tv(
     refresh: str = Query(default=""),
     sort: str = Query(default=""),
     sort_order: str = Query(default="asc"),
+    status: str = Query(default="all"),
+    page: int = Query(default=0),
+    page_size: int = Query(default=0),
 ):
-    """Return cached TV instantly, trigger background refresh if needed."""
+    """Return cached TV. Pagination via page+page_size (both default 0 = return all)."""
     s = request.app.state.settings
     items, scanning = compute_tv_view(s)
     maybe_trigger_background_scan(s, "tv", force=(refresh == "1"))
-    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
-    return {"items": items, "count": len(items), "scanning": scanning}
+    items, total = apply_filters(
+        items, q=q, limit=limit, sort=sort, sort_order=sort_order,
+        status=status, page=page, page_size=page_size,
+    )
+    return {
+        "items": items, "count": len(items),
+        "total_count": total,
+        "page": page, "page_size": page_size,
+        "has_more": page > 0 and page_size > 0 and (page * page_size) < total,
+        "scanning": scanning,
+    }
 
 
 @router.get("/media/pending")
@@ -99,7 +123,7 @@ def api_media_pending(
     # Filter out ignored items
     items = [i for i in items if not i.get("ignored")]
 
-    items = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
+    items, _ = apply_filters(items, q=q, limit=limit, sort=sort, sort_order=sort_order)
     return {"items": items, "count": len(items)}
 
 
@@ -137,7 +161,7 @@ def api_media_ignored_rich(
     # Keep only ignored items
     items = [i for i in items if i.get("ignored")]
 
-    items = apply_filters(items, q=q, limit=limit)
+    items, _ = apply_filters(items, q=q, limit=limit)
     return {"items": items, "count": len(items)}
 
 
@@ -548,3 +572,92 @@ def api_enrich_stop():
         enrich_state["running"] = False
         return {"ok": True, "status": "stopping"}
     return {"ok": True, "status": "not_running"}
+
+
+# ----------------------- bulk-by-filter helpers -----------------------
+def _collect_matching_paths(s, media_type: str, q: str = "", status: str = "all") -> list[dict]:
+    """Resolve a filter to the full set of matching item dicts (no pagination)."""
+    if media_type == "movie":
+        items, _ = compute_movies_view(s)
+    elif media_type == "tv":
+        items, _ = compute_tv_view(s)
+    else:
+        return []
+    items, _ = apply_filters(items, q=q, status=status, page=0, page_size=0)
+    return items
+
+
+@router.post("/media/ignore-by-filter")
+def api_ignore_by_filter(data: dict = Body(default={}), request: Request = None):
+    """Add all items matching a filter to the ignore list. Only pending non-ignored items."""
+    s = request.app.state.settings
+    media_type = (data or {}).get("media_type")
+    if media_type not in ("movie", "tv"):
+        return JSONResponse({"error": "media_type must be 'movie' or 'tv'"}, status_code=400)
+    flt = (data or {}).get("filter") or {}
+    items = _collect_matching_paths(s, media_type, q=flt.get("q", ""), status=flt.get("status", "all"))
+    eligible = [i for i in items if i.get("status") == "pending" and not i.get("ignored")]
+    reason = (data or {}).get("reason", "Bulk ignore by filter from UI")
+    affected = []
+    errors = []
+    for it in eligible:
+        try:
+            set_ignored(it["path"], reason)
+            affected.append(it["path"])
+        except Exception as e:
+            errors.append({"path": it["path"], "error": str(e)})
+    return {"affected": len(affected), "errors": errors, "matched": len(items), "eligible": len(eligible)}
+
+
+@router.post("/media/output-by-filter")
+def api_delete_output_by_filter(data: dict = Body(default={}), request: Request = None):
+    """Delete output files for all items matching a filter. Only ready items."""
+    s = request.app.state.settings
+    media_type = (data or {}).get("media_type")
+    if media_type not in ("movie", "tv"):
+        return JSONResponse({"error": "media_type must be 'movie' or 'tv'"}, status_code=400)
+    flt = (data or {}).get("filter") or {}
+    items = _collect_matching_paths(s, media_type, q=flt.get("q", ""), status=flt.get("status", "all"))
+    eligible = [i for i in items if i.get("status") == "ready"]
+    paths = [i["path"] for i in eligible]
+    # Delegate to the same logic as DELETE /media/output
+    output_folder = os.path.realpath(s.OUTPUT_FOLDER)
+    deleted = []
+    errors = []
+    companion_exts = (".nfo", ".srt", ".sub", ".idx", ".ass", ".ssa", ".meta.json",
+                      ".jpg", ".png", "-thumb.jpg", "-poster.jpg")
+    for p in paths:
+        real = os.path.realpath(p)
+        if not real.startswith(output_folder + os.sep) and real != output_folder:
+            errors.append({"path": p, "error": "path outside output folder"})
+            continue
+        if not os.path.isfile(real):
+            errors.append({"path": p, "error": "file not found"})
+            continue
+        try:
+            os.remove(real)
+            deleted.append(p)
+            stem = os.path.splitext(real)[0]
+            parent = os.path.dirname(real)
+            for ext in companion_exts:
+                companion = stem + ext
+                if os.path.isfile(companion):
+                    os.remove(companion)
+            try:
+                d = parent
+                while d != output_folder and d.startswith(output_folder):
+                    if not os.listdir(d):
+                        os.rmdir(d); d = os.path.dirname(d)
+                    else:
+                        break
+            except OSError:
+                pass
+        except Exception as e:
+            errors.append({"path": p, "error": str(e)})
+    if deleted:
+        media_cache = get_media_cache()
+        media_cache["movies"]["items"] = []
+        media_cache["movies"]["last_scan"] = 0
+        media_cache["tv"]["items"] = []
+        media_cache["tv"]["last_scan"] = 0
+    return {"affected": len(deleted), "errors": errors, "matched": len(items), "eligible": len(eligible)}

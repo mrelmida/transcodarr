@@ -1430,14 +1430,34 @@ def read_log_tail(log_path: str, pos: int = 0, inode: str | None = None) -> dict
     return {"text": text, "pos": new_pos, "inode": inode_token, "reset": reset}
 
 
-_SORT_FIELDS = {"mtime", "size_gb", "title", "year"}
+_SORT_FIELDS = {"mtime", "size_gb", "title", "year", "show", "season", "episode"}
+
+
+def status_key(item: dict) -> str:
+    """Mirror of _statusKey() in ui.js — collapses raw status into UI-facing buckets."""
+    s = item.get("status")
+    if s in ("processing", "queued", "re-encoding"):
+        return "processing"
+    if s == "pending" and item.get("ignored"):
+        return "ignored"
+    if s == "pending":
+        return "pending"
+    return "ready"
 
 
 def apply_filters(
     items: list[dict], q: str = "", limit: int = 0,
     sort: str = "", sort_order: str = "asc",
-) -> list[dict]:
-    """Optional fuzzy filter, sort, and limiter."""
+    status: str = "all",
+    page: int = 0, page_size: int = 0,
+) -> tuple[list[dict], int]:
+    """Filter / sort / paginate.
+
+    Returns (items, total_count) — total_count is the count BEFORE pagination, so the
+    client can render "X of Y matching" without loading the rest.
+
+    Backward-compat: pass page=0 or page_size=0 to skip pagination (return all).
+    """
     if q:
         q_lower = q.lower()
         def _match(d: dict):
@@ -1445,13 +1465,22 @@ def apply_filters(
             return q_lower in blob.lower()
         items = [d for d in items if _match(d)]
 
+    if status and status != "all":
+        items = [d for d in items if status_key(d) == status]
+
     if sort and sort in _SORT_FIELDS:
         reverse = sort_order.lower() == "desc"
         items = sorted(items, key=lambda d: (d.get(sort) is None, d.get(sort, "")), reverse=reverse)
 
-    if limit and limit > 0:
+    total = len(items)
+
+    if page > 0 and page_size > 0:
+        offset = (page - 1) * page_size
+        items = items[offset:offset + page_size]
+    elif limit and limit > 0:
         items = items[:limit]
-    return items
+
+    return items, total
 
 
 # ----------------------- webhook helpers -----------------------

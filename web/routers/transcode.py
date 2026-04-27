@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 import os, logging
 
 from transcodarr_core.database import is_ignored
+from web.shared_state import compute_movies_view, compute_tv_view, apply_filters
 
 router = APIRouter()
 
@@ -96,6 +97,69 @@ def api_transcode_batch(request: Request, data: dict = Body(default={})):
         return {"status": "queued", "job": job.to_dict(), "batch_size": len(valid)}
     else:
         return JSONResponse({"error": "Failed to queue batch"}, status_code=500)
+
+
+@router.post("/transcode/batch-by-filter")
+def api_transcode_batch_by_filter(request: Request, data: dict = Body(default={})):
+    """Queue a batch matching a server-side filter — the 'select all 763 matching' flow."""
+    worker_pool = request.app.state.worker_pool
+    if not worker_pool:
+        return JSONResponse({"error": "Worker pool not initialized"}, status_code=500)
+
+    media_type = (data or {}).get("media_type")
+    if media_type not in ("movie", "tv"):
+        return JSONResponse({"error": "media_type must be 'movie' or 'tv'"}, status_code=400)
+
+    if worker_pool.manual_workers <= 0:
+        return JSONResponse({"error": "Manual transcoding is disabled (MANUAL_WORKERS=0)"}, status_code=503)
+    if not worker_pool.can_accept_job():
+        status = worker_pool.get_status()
+        return JSONResponse({
+            "error": "All manual workers busy",
+            "active_manual_jobs": status["active_manual_jobs"],
+            "manual_workers": status["manual_workers"],
+        }, status_code=503)
+
+    s = request.app.state.settings
+    flt = (data or {}).get("filter") or {}
+    if media_type == "movie":
+        items, _ = compute_movies_view(s)
+    else:
+        items, _ = compute_tv_view(s)
+    items, _ = apply_filters(items, q=flt.get("q", ""), status=flt.get("status", "all"), page=0, page_size=0)
+
+    valid = []
+    for it in items:
+        fp = it.get("path")
+        if not fp or not os.path.exists(fp):
+            continue
+        if it.get("ignored"):
+            continue
+        if it.get("status") not in ("pending", "ready"):
+            continue
+        try:
+            if is_ignored(fp):
+                continue
+        except Exception:
+            pass
+        entry = {"file_path": fp, "media_type": media_type}
+        if media_type == "movie":
+            entry["title"] = it.get("title")
+            entry["year"] = it.get("year")
+        else:
+            entry["show"] = it.get("show")
+            entry["season"] = it.get("season")
+            entry["episode"] = it.get("episode")
+            entry["title"] = it.get("title")
+        valid.append(entry)
+
+    if not valid:
+        return JSONResponse({"error": "No valid files match the filter"}, status_code=400)
+
+    job = worker_pool.submit_batch_job(valid)
+    if job:
+        return {"status": "queued", "job": job.to_dict(), "batch_size": len(valid), "matched": len(items)}
+    return JSONResponse({"error": "Failed to queue batch"}, status_code=500)
 
 
 @router.get("/transcode/jobs")
