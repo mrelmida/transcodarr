@@ -412,7 +412,33 @@ def _get_cache_path(media_type: str) -> Path:
     return _CACHE_DIR / f"{media_type}_cache.json"
 
 def load_cache(media_type: str) -> list[dict]:
-    """Load from disk cache into memory."""
+    """Load cache into memory. Prefers Postgres (Phase 3), falls back to JSON file."""
+    # Try DB first — survives container rebuilds AND queryable.
+    try:
+        from transcodarr_core.database import (
+            cache_count_movies, cache_count_tv_episodes,
+            get_all_movies, get_all_tv_episodes,
+        )
+        if media_type == "movies":
+            count = cache_count_movies()
+            if count > 0:
+                items = get_all_movies()
+                _media_cache["movies"]["items"] = items
+                _media_cache["movies"]["last_scan"] = int(time.time())
+                logging.info("[CACHE] Loaded %d movies from DB", len(items))
+                return items
+        else:
+            count = cache_count_tv_episodes()
+            if count > 0:
+                items = get_all_tv_episodes()
+                _media_cache["tv"]["items"] = items
+                _media_cache["tv"]["last_scan"] = int(time.time())
+                logging.info("[CACHE] Loaded %d TV episodes from DB", len(items))
+                return items
+    except Exception as e:
+        logging.warning("[CACHE] DB load failed for %s, falling back to JSON: %s", media_type, e)
+
+    # Fallback: JSON file (legacy persistence path)
     cache_path = _get_cache_path(media_type)
     if cache_path.exists():
         try:
@@ -1312,8 +1338,40 @@ def scan_tv_incremental(root: Path, existing_cache: dict[str, dict], reencode_ma
     return items
 
 
+def migrate_json_cache_to_db() -> dict:
+    """One-shot: if the DB cache is empty AND a JSON cache file has items, copy
+    JSON → DB and rename the JSON file to *.migrated. Idempotent — safe to run on every startup."""
+    from transcodarr_core.database import (
+        cache_count_movies, cache_count_tv_episodes,
+        bulk_upsert_movies, bulk_upsert_tv_episodes,
+    )
+    result = {"movies_migrated": 0, "tv_migrated": 0}
+    for media_type, count_fn, bulk_fn in (
+        ("movies", cache_count_movies, bulk_upsert_movies),
+        ("tv", cache_count_tv_episodes, bulk_upsert_tv_episodes),
+    ):
+        try:
+            if count_fn() > 0:
+                continue   # DB already populated, nothing to migrate
+            cache_path = _get_cache_path(media_type)
+            if not cache_path.exists():
+                continue
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            items = data.get("items", []) or []
+            if not items:
+                continue
+            n = bulk_fn(items)
+            result[f"{media_type}_migrated"] = n
+            logging.info("[MIGRATION] Copied %d %s from JSON cache → DB", n, media_type)
+            cache_path.rename(cache_path.with_suffix(".json.migrated"))
+        except Exception as e:
+            logging.warning("[MIGRATION] %s JSON→DB failed: %s", media_type, e)
+    return result
+
+
 def background_scan(media_type: str, root: Path):
-    """Background thread to scan and update cache."""
+    """Background thread to scan + persist to BOTH the DB cache (Phase 3) and the JSON cache (legacy fallback)."""
     if _media_cache[media_type]["scanning"]:
         return
 
@@ -1327,6 +1385,22 @@ def background_scan(media_type: str, root: Path):
             items = scan_tv_incremental(root, existing)
 
         save_cache(media_type, items)
+
+        # Persist to Postgres in addition to JSON. Drops rows for files that no longer exist.
+        try:
+            from transcodarr_core.database import (
+                bulk_upsert_movies, bulk_upsert_tv_episodes,
+                delete_movies_not_in, delete_tv_episodes_not_in,
+            )
+            paths = [it["path"] for it in items if it.get("path")]
+            if media_type == "movies":
+                bulk_upsert_movies(items)
+                delete_movies_not_in(paths)
+            else:
+                bulk_upsert_tv_episodes(items)
+                delete_tv_episodes_not_in(paths)
+        except Exception as e:
+            logging.warning("[SCAN] DB persistence failed for %s: %s", media_type, e)
     finally:
         _media_cache[media_type]["scanning"] = False
 

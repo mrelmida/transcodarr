@@ -17,7 +17,7 @@ from transcodarr_core.worker_pool import WorkerPoolManager, set_worker_pool, cle
 from transcodarr_core.pipeline import transcode_file
 from env_flag import get_stop_flag, set_stop_flag
 
-from web.shared_state import start_stats_collector
+from web.shared_state import start_stats_collector, migrate_json_cache_to_db
 from web.routers import (
     control, settings, media, transcode, workers,
     subtitles, connections, webhooks, system, events,
@@ -84,6 +84,12 @@ async def lifespan(app: FastAPI):
 
     # Start system stats collector
     start_stats_collector()
+
+    # Phase 3: one-shot JSON → DB cache migration. Idempotent.
+    try:
+        migrate_json_cache_to_db()
+    except Exception as e:
+        logging.warning("[STARTUP] JSON→DB migration skipped: %s", e)
 
     yield
 

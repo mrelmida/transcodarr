@@ -1138,3 +1138,125 @@ def restore_default_presets() -> int:
     if count:
         logging.info("[DATABASE] Restored %d default encoding presets", count)
     return count
+
+
+# ============================================================
+# Phase 3: bulk media-cache helpers (DB as source of truth, JSON fallback)
+# ============================================================
+
+from psycopg2.extras import execute_values
+
+_MOVIE_COLS = ("path", "title", "year", "imdb_id", "tmdb_id", "size_gb", "runtime_min",
+               "container", "vcodec", "acodec", "resolution", "video_bitrate", "audio_bitrate",
+               "total_bitrate", "frame_rate", "audio_channels", "audio_sample_rate",
+               "mtime", "status", "processed_at", "processing_duration", "source_size",
+               "compression_ratio", "last_scanned")
+
+_TV_COLS = ("path", "show_path", "show", "season", "episode", "episode_count", "title",
+            "size_gb", "runtime_min", "container", "vcodec", "acodec", "resolution",
+            "video_bitrate", "audio_bitrate", "total_bitrate", "frame_rate",
+            "audio_channels", "audio_sample_rate", "mtime", "status",
+            "processed_at", "processing_duration", "source_size", "compression_ratio",
+            "last_scanned")
+
+
+def _movie_row(item: Dict) -> tuple:
+    return (
+        item.get("path"), item.get("title"), item.get("year"),
+        item.get("imdb_id"), item.get("tmdb_id"),
+        item.get("size_gb"), item.get("runtime_min"), item.get("container"),
+        item.get("vcodec"), item.get("acodec"), item.get("resolution"),
+        item.get("video_bitrate"), item.get("audio_bitrate"), item.get("total_bitrate"),
+        item.get("frame_rate"), item.get("audio_channels"), item.get("audio_sample_rate"),
+        item.get("mtime"), item.get("status", "ready"),
+        item.get("processed_at"), item.get("processing_duration"),
+        item.get("source_size"), item.get("compression_ratio"),
+        time.time(),
+    )
+
+
+def _tv_row(item: Dict) -> tuple:
+    season = item.get("season")
+    episode = item.get("episode")
+    # show_path FKs to tv_shows.path which we don't separately populate from cache scans.
+    # Leave NULL; the FK has ON DELETE SET NULL so it stays valid.
+    show_path = None
+    return (
+        item.get("path"), show_path, item.get("show"),
+        season, episode, len(item.get("episodes") or []) or 1,
+        item.get("title"),
+        item.get("size_gb"), item.get("runtime_min"), item.get("container"),
+        item.get("vcodec"), item.get("acodec"), item.get("resolution"),
+        item.get("video_bitrate"), item.get("audio_bitrate"), item.get("total_bitrate"),
+        item.get("frame_rate"), item.get("audio_channels"), item.get("audio_sample_rate"),
+        item.get("mtime"), item.get("status", "ready"),
+        item.get("processed_at"), item.get("processing_duration"),
+        item.get("source_size"), item.get("compression_ratio"),
+        time.time(),
+    )
+
+
+def _bulk_upsert(table: str, cols: tuple, rows: List[tuple], chunk: int = 500) -> int:
+    """Chunked INSERT ... ON CONFLICT (path) DO UPDATE for the cache tables."""
+    if not rows:
+        return 0
+    update_cols = [c for c in cols if c != "path"]
+    update_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+    sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES %s ON CONFLICT (path) DO UPDATE SET {update_clause}"
+    total = 0
+    with get_cursor() as cursor:
+        for i in range(0, len(rows), chunk):
+            execute_values(cursor, sql, rows[i:i+chunk], page_size=chunk)
+            total += cursor.rowcount
+    return total
+
+
+def bulk_upsert_movies(items: List[Dict]) -> int:
+    """Write a full scan to the movies cache table in one transaction-friendly batch."""
+    rows = [_movie_row(it) for it in items if it.get("path")]
+    n = _bulk_upsert("movies", _MOVIE_COLS, rows)
+    logging.info("[DATABASE] bulk_upsert_movies: %d rows", n)
+    return n
+
+
+def bulk_upsert_tv_episodes(items: List[Dict]) -> int:
+    """Write a full scan to the tv_episodes cache table."""
+    rows = [_tv_row(it) for it in items if it.get("path")]
+    n = _bulk_upsert("tv_episodes", _TV_COLS, rows)
+    logging.info("[DATABASE] bulk_upsert_tv_episodes: %d rows", n)
+    return n
+
+
+def delete_movies_not_in(paths: List[str]) -> int:
+    """Drop cache rows whose source files no longer exist."""
+    if paths is None:
+        return 0
+    with get_cursor() as cursor:
+        if not paths:
+            cursor.execute("DELETE FROM movies")
+        else:
+            cursor.execute("DELETE FROM movies WHERE path NOT IN %s", (tuple(paths),))
+        return cursor.rowcount
+
+
+def delete_tv_episodes_not_in(paths: List[str]) -> int:
+    if paths is None:
+        return 0
+    with get_cursor() as cursor:
+        if not paths:
+            cursor.execute("DELETE FROM tv_episodes")
+        else:
+            cursor.execute("DELETE FROM tv_episodes WHERE path NOT IN %s", (tuple(paths),))
+        return cursor.rowcount
+
+
+def cache_count_movies() -> int:
+    with get_cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) AS n FROM movies")
+        return cursor.fetchone()["n"]
+
+
+def cache_count_tv_episodes() -> int:
+    with get_cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) AS n FROM tv_episodes")
+        return cursor.fetchone()["n"]
