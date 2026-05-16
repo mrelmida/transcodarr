@@ -1131,18 +1131,18 @@ function _buildMovieTileHtml(m) {
   const titleAttr = (m.title || "").replace(/"/g, "&quot;");
 
   let statusPill = "";
-  if (m.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round((m.progress || 0) * 100)}%</span>`;
+  if (m.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round(m.progress || 0)}%</span>`;
   else if (m.status === "queued") statusPill = `<span class="tile-status-pill" style="background:rgba(139,92,246,.85)">Queued</span>`;
   else if (m.status === "pending") statusPill = `<span class="tile-status-pill" style="background:rgba(245,158,11,.85)">Pending</span>`;
-  else if (m.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round((m.reencode_progress || 0) * 100)}%</span>`;
+  else if (m.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round(m.reencode_progress || 0)}%</span>`;
   else if (m.ignored) statusPill = `<span class="tile-status-pill" style="background:rgba(120,120,120,.85)">Ignored</span>`;
 
   let progressOverlay = "";
   if (m.status === "processing") {
-    const pct = Math.round((m.progress || 0) * 100);
+    const pct = Math.round(m.progress || 0);
     progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>${pct}%</span><span>${m.elapsed_fmt || ""}</span></div></div>`;
   } else if (m.status === "re-encoding") {
-    const pct = Math.round((m.reencode_progress || 0) * 100);
+    const pct = Math.round(m.reencode_progress || 0);
     progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>Re-encode ${pct}%</span><span>${m.reencode_elapsed_fmt || ""}</span></div></div>`;
   }
 
@@ -1765,18 +1765,18 @@ function _buildTVTileHtml(e) {
   }
 
   let statusPill = "";
-  if (e.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round((e.progress || 0) * 100)}%</span>`;
+  if (e.status === "processing") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">${Math.round(e.progress || 0)}%</span>`;
   else if (e.status === "queued") statusPill = `<span class="tile-status-pill" style="background:rgba(139,92,246,.85)">Queued</span>`;
   else if (e.status === "pending") statusPill = `<span class="tile-status-pill" style="background:rgba(245,158,11,.85)">Pending</span>`;
-  else if (e.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round((e.reencode_progress || 0) * 100)}%</span>`;
+  else if (e.status === "re-encoding") statusPill = `<span class="tile-status-pill" style="background:rgba(90,169,255,.85)">Re-enc ${Math.round(e.reencode_progress || 0)}%</span>`;
   else if (e.ignored) statusPill = `<span class="tile-status-pill" style="background:rgba(120,120,120,.85)">Ignored</span>`;
 
   let progressOverlay = "";
   if (e.status === "processing") {
-    const pct = Math.round((e.progress || 0) * 100);
+    const pct = Math.round(e.progress || 0);
     progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>${pct}%</span><span>${e.elapsed_fmt || ""}</span></div></div>`;
   } else if (e.status === "re-encoding") {
-    const pct = Math.round((e.reencode_progress || 0) * 100);
+    const pct = Math.round(e.reencode_progress || 0);
     progressOverlay = `<div class="tile-progress-overlay"><div class="tile-progress-bar"><div style="width:${pct}%"></div></div><div class="tile-progress-text"><span>Re-encode ${pct}%</span><span>${e.reencode_elapsed_fmt || ""}</span></div></div>`;
   }
 
