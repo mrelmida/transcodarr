@@ -296,6 +296,9 @@ def _run_migrations(conn):
     if cursor.rowcount:
         logging.info("[DATABASE] Migration: Renamed X264_THREADS in %d preset(s)", cursor.rowcount)
 
+    # Migration: Index transcode_history.source_path for fast circuit-breaker lookups.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcode_source ON transcode_history(source_path)")
+
     cursor.close()
     conn.commit()
 
@@ -318,6 +321,7 @@ def _create_schema(conn):
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcode_output ON transcode_history(output_path)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transcode_source ON transcode_history(source_path)")
 
     # Movies cache
     cursor.execute("""
@@ -497,6 +501,23 @@ def get_transcode_history(output_path: str) -> Optional[Dict]:
     """Get transcode history for a specific output path."""
     with get_cursor() as cursor:
         cursor.execute("SELECT * FROM transcode_history WHERE output_path = %s", (output_path,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_transcode_history_by_source(source_path: str) -> Optional[Dict]:
+    """Return most-recent transcode-history row for this source path, if any.
+
+    Used by the walk-loop circuit breaker to detect sources that were already
+    successfully transcoded but never cleaned up — preventing re-transcode loops.
+    """
+    with get_cursor() as cursor:
+        cursor.execute(
+            "SELECT output_path, source_path, source_size, processed_at "
+            "FROM transcode_history WHERE source_path = %s "
+            "ORDER BY processed_at DESC NULLS LAST LIMIT 1",
+            (source_path,),
+        )
         row = cursor.fetchone()
         return dict(row) if row else None
 

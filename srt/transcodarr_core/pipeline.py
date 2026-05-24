@@ -721,6 +721,7 @@ def transcode_file(file_path: str, settings: Settings):
 
             source_size = os.path.getsize(file_path) if os.path.exists(file_path) else None
             add_transcode_history(final_path, file_path, source_size, processing_duration, copied=False)
+            logging.info("[HISTORY] Recorded transcode: %s → %s", file_path, final_path)
         except Exception as e:
             logging.debug("[TRANSCODE-META] Failed to write history: %s", e)
 
@@ -951,6 +952,7 @@ def copy_compatible_file(file_path: str, settings: Settings):
         # ---------- save to database ----------
         try:
             add_transcode_history(final_path, file_path, source_size, processing_duration=0, copied=True)
+            logging.info("[HISTORY] Recorded copy: %s → %s", file_path, final_path)
         except Exception as e:
             logging.debug("[COPY] Failed to write history: %s", e)
 
@@ -1074,8 +1076,8 @@ def walk_and_process(
 
     # Import here to avoid circular imports
     from transcodarr_core.worker_pool import get_worker_pool
-    from transcodarr_core.database import is_ignored
-    from transcodarr_core.config import get_media_paths
+    from transcodarr_core.database import is_ignored, get_transcode_history_by_source, set_ignored
+    from transcodarr_core.config import get_media_paths, get_setting
 
     worker_pool = get_worker_pool()
     use_auto_pool = worker_pool and worker_pool.auto_workers > 0
@@ -1132,6 +1134,33 @@ def walk_and_process(
                 if file_path.lower() != final_mp4_path.lower() and os.path.exists(final_mp4_path):
                     logging.info(f"Skipping {file_path} — final .mp4 already exists in this folder.")
                     continue
+
+                # Circuit breaker: if we have a successful transcode history record for this
+                # exact source (matching size) and the output still exists, the source should
+                # have been cleaned up but wasn't. Add to ignore list to break the loop.
+                # Kill-switch: set DEDUP_BY_TRANSCODE_HISTORY=false to disable.
+                if get_setting("DEDUP_BY_TRANSCODE_HISTORY", "true") != "false":
+                    try:
+                        existing = get_transcode_history_by_source(file_path)
+                    except Exception:
+                        existing = None
+                    if existing and existing.get("output_path") and os.path.exists(existing["output_path"]):
+                        try:
+                            current_size = os.path.getsize(file_path)
+                        except OSError:
+                            current_size = None
+                        if existing.get("source_size") == current_size:
+                            logging.error(
+                                "[CIRCUIT-BREAKER] Source %s was already transcoded to %s on %s "
+                                "but is still in the watch tree. Adding to ignore list to prevent "
+                                "re-transcode loop. Investigate why cleanup failed.",
+                                file_path, existing["output_path"], existing.get("processed_at"),
+                            )
+                            try:
+                                set_ignored(file_path, reason="circuit-breaker: source not cleaned after successful transcode")
+                            except Exception as e:
+                                logging.warning("[CIRCUIT-BREAKER] Failed to add to ignore list: %s", e)
+                            continue
 
                 # Always transcode to ensure subs + audio normalization
                 fn = transcode_file_fn

@@ -1567,9 +1567,25 @@ def remap_path(path: str, path_from: str, path_to: str) -> str:
     return path
 
 
+_FILENAME_FORBIDDEN = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
+
+
+def _safe_stem(stem: str) -> str:
+    """Replace filesystem-reserved characters so a stem is safe as a path component.
+
+    Uses '+' as the replacement to match the convention qbittorrent/Sonarr
+    already use on disk (e.g. "ronny/lily" → "ronny+lily"), keeping the
+    meta-stem aligned with the video-stem for fast exact-match lookup.
+    """
+    cleaned = _FILENAME_FORBIDDEN.sub("+", stem)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().rstrip(".")
+    return cleaned[:200] or "untitled"
+
+
 def write_meta_json(out_dir: Path, stem: str, data: dict) -> Path:
     """Write .meta.json file atomically."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    stem = _safe_stem(stem)
     out_file = out_dir / f"{stem}.meta.json"
     tmp_file = out_dir / f".meta.{int(time.time())}.tmp"
     try:

@@ -49,8 +49,13 @@ def find_meta_json(video_path: str) -> Optional[Path]:
         logging.warning("[META] No meta.json found matching episode %s for %s", f"S{video_ep[0]:02d}E{video_ep[1]:02d}", p.name)
         return None
 
-    # Non-TV content: fall back to first meta.json
-    return alts[0]
+    # Non-TV content: only fall back when there's exactly one candidate.
+    # Multiple metas with no episode code means we'd be guessing — refuse instead.
+    if len(alts) == 1:
+        return alts[0]
+    logging.warning("[META] no exact match for %s and %d meta.json candidates in folder — refusing to guess",
+                    p.name, len(alts))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +151,13 @@ def find_unified_meta(video_path: str) -> Optional[str]:
         logging.warning("[META] No meta.json found matching episode %s for %s", f"S{video_ep[0]:02d}E{video_ep[1]:02d}", p.name)
         return None
 
-    # Non-TV content: fall back to first meta.json
-    return str(alts[0])
+    # Non-TV content: only fall back when there's exactly one candidate.
+    # Multiple metas with no episode code means we'd be guessing — refuse instead.
+    if len(alts) == 1:
+        return str(alts[0])
+    logging.warning("[META] no exact match for %s and %d meta.json candidates in folder — refusing to guess",
+                    p.name, len(alts))
+    return None
 
 
 def _normalize_episode_ids(ids: Dict[str, Any] | None) -> Tuple[List[str], List[int], List[Union[int, str]]]:
@@ -215,8 +225,17 @@ def load_unified_meta(video_path: str) -> Dict[str, Any]:
     try:
         with open(meta_path, "r", encoding="utf-8", errors="replace") as f:
             raw = json.load(f)
+    except FileNotFoundError:
+        logging.error("[META] file resolved but not readable: %s", meta_path)
+        return out
+    except PermissionError as e:
+        logging.error("[META] permission denied reading %s: %s", meta_path, e)
+        return out
+    except json.JSONDecodeError as e:
+        logging.error("[META] malformed JSON in %s: %s — was it half-written?", meta_path, e)
+        return out
     except Exception as e:
-        logging.debug("[META] Could not parse meta at %s: %s", meta_path, e)
+        logging.warning("[META] unexpected error parsing %s: %s", meta_path, e)
         return out
 
     # Kind inference

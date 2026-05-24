@@ -26,7 +26,8 @@ from .logging_setup import setup_logging, archive_and_clear_once
 from .watcher import start_watchdog
 from .database import (
     init_database, get_connection, get_cursor, release_connection, close_pool,
-    add_transcode_history, get_transcode_history, get_all_transcode_history,
+    add_transcode_history, get_transcode_history, get_transcode_history_by_source,
+    get_all_transcode_history,
     upsert_movie, get_movie, get_all_movies, delete_movie,
     upsert_tv_show, get_tv_show,
     upsert_tv_episode, get_tv_episode, get_all_tv_episodes, delete_tv_episode,
