@@ -6,6 +6,7 @@
 /.vscode/
 /.claude/
 /.claudeignore
+/CLAUDE.md
 *.swp
 *.swo
 .DS_Store
