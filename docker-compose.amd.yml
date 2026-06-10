@@ -1,0 +1,48 @@
+services:
+  transcodarr:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.amd
+    container_name: transcodarr-amd
+    ports:
+      - "5025:5025"
+    devices:
+      - /dev/dri:/dev/dri
+    env_file: .env
+    volumes:
+      - ${MOVIES_WATCH_PATH:?Set MOVIES_WATCH_PATH}:/watch/movies
+      - ${TV_WATCH_PATH:?Set TV_WATCH_PATH}:/watch/tv
+      - ${MOVIES_OUTPUT_PATH:?Set MOVIES_OUTPUT_PATH}:/output/movies
+      - ${TV_OUTPUT_PATH:?Set TV_OUTPUT_PATH}:/output/tv
+      - ${TEMP_PATH:-/tmp/transcodarr}:/temp
+      - ${LOG_PATH:-./logs}:/app/logs
+      - ${DATA_PATH:-./data}:/app/data
+      - ${CONFIG_PATH:-./config}:/app/config
+      - ${MEDIA_CACHE_PATH:-./data/cache}:/app/web/cache
+    environment:
+      - ENV_FILE_PATH=./config/.env
+      - WATCH_FOLDER=/watch
+      - OUTPUT_FOLDER=/output
+      - MOVIES_WATCH_PATH=/watch/movies
+      - TV_WATCH_PATH=/watch/tv
+      - MOVIES_OUTPUT_PATH=/output/movies
+      - TV_OUTPUT_PATH=/output/tv
+      - MOVIES_WATCH_LABEL=${MOVIES_WATCH_PATH}
+      - TV_WATCH_LABEL=${TV_WATCH_PATH}
+      - MOVIES_OUTPUT_LABEL=${MOVIES_OUTPUT_PATH}
+      - TV_OUTPUT_LABEL=${TV_OUTPUT_PATH}
+      - MEDIA_TEMP_FOLDER=/temp
+      - MEDIA_TEMP_LABEL=${TEMP_PATH:-/tmp/transcodarr}
+      - FLASK_SECRET=${FLASK_SECRET:?Set FLASK_SECRET in .env}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:?Set ADMIN_API_KEY in .env}
+      - POSTGRES_HOST=${POSTGRES_HOST:?Set POSTGRES_HOST in .env}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-transcodarr}
+      - POSTGRES_USER=${POSTGRES_USER:-transcodarr}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    logging:
+      driver: syslog
+      options:
+        syslog-address: "${SYSLOG_ADDRESS:-tcp://localhost:1514}"
+        tag: "transcodarr-amd"
+    restart: unless-stopped

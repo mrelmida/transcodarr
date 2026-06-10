@@ -1,0 +1,23 @@
+FROM python:3.11-bookworm
+
+# Install ffmpeg (bookworm includes zscale via libzimg2 for HDR tone mapping)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg libzimg2 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python dependencies first (better layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Bring in the rest of the project
+COPY . .
+
+# Install core package (editable)
+RUN pip install --no-cache-dir -e .
+
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
+
+CMD ["./entrypoint.sh"]
