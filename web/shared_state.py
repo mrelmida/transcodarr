@@ -137,6 +137,12 @@ SETTINGS_SCHEMA = {
                 {"value": "h264_qsv", "label": "H.264 (Intel QSV - GPU)"},
                 {"value": "hevc_qsv", "label": "H.265/HEVC (Intel QSV - GPU)"},
                 {"value": "av1_qsv", "label": "AV1 (Intel QSV - GPU)"},
+                {"value": "h264_nvenc", "label": "H.264 (NVIDIA NVENC - GPU)"},
+                {"value": "hevc_nvenc", "label": "H.265/HEVC (NVIDIA NVENC - GPU)"},
+                {"value": "av1_nvenc", "label": "AV1 (NVIDIA NVENC - GPU)"},
+                {"value": "h264_amf", "label": "H.264 (AMD AMF - GPU)"},
+                {"value": "hevc_amf", "label": "H.265/HEVC (AMD AMF - GPU)"},
+                {"value": "av1_amf", "label": "AV1 (AMD AMF - GPU)"},
             ]},
             "TARGET_AUDIO_CODEC": {"label": "Audio Codec", "type": "select", "group": "audio", "options": [
                 {"value": "aac", "label": "AAC"},

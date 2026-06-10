@@ -35,7 +35,7 @@ Download Client ──► Watch Folder ──► Transcodarr ──► Output Li
 - Encoding presets — built-in profiles (Audio Only, Remux + Subs, 4K Downscale, High Quality) plus custom user presets
 - **Auto preset** — dynamic rule-based preset selection per-file based on resolution, video codec, and media type (movie vs TV)
 - Per-stream control — encode or copy (passthrough) video and audio independently
-- Configurable video codec (H.264, H.265, VP9, AV1; supports CPU or Intel QSV hardware acceleration), audio codec, container, resolution, preset, CRF
+- Configurable video codec (H.264, H.265, VP9, AV1; supports CPU, Intel QSV, NVIDIA NVENC, and AMD AMF hardware acceleration), audio codec, container, resolution, preset, CRF
 - Dual worker pool: separate auto (watchdog) and manual (UI-triggered) workers, both resizable live
 - Batch transcode mode with batch tracking and stop controls for re-encoding existing libraries
 - Real-time progress tracking with percentage and file size
@@ -152,7 +152,7 @@ Database (UI settings) > Environment Variables > .env file > Defaults
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `TARGET_VIDEO_CODEC` | `h264` | `h264`, `h265`, `vp9`, `av1` (CPU) or `h264_qsv`, `hevc_qsv`, `av1_qsv` (Intel QSV GPU) |
+| `TARGET_VIDEO_CODEC` | `h264` | `h264`, `h265`, `vp9`, `av1` (CPU) or `h264_qsv`/`hevc_qsv`/`av1_qsv` (Intel QSV GPU), `h264_nvenc`/`hevc_nvenc`/`av1_nvenc` (NVIDIA NVENC GPU), `h264_amf`/`hevc_amf`/`av1_amf` (AMD AMF GPU) |
 | `TARGET_AUDIO_CODEC` | `aac` | aac, ac3, eac3, flac, opus |
 | `TARGET_CONTAINER` | `.mp4` | .mp4, .mkv, .webm |
 | `TARGET_RESOLUTION` | `1920x1080` | source, 720p, 1080p, 1440p, 4K |
@@ -391,13 +391,14 @@ To offload work from your CPU and speed up transcoding, you can use GPU-accelera
 
 | Codec | Software (CPU) | Intel QSV (GPU) | NVIDIA NVENC (GPU) | AMD AMF (GPU) |
 |-------|----------------|-----------------|--------------------|---------------|
-| **H.264** | Yes (`libx264`) | Yes (`h264_qsv`) | No | No |
-| **H.265 / HEVC** | Yes (`libx265`) | Yes (`hevc_qsv`) | No | No |
+| **H.264** | Yes (`libx264`) | Yes (`h264_qsv`) | Yes (`h264_nvenc`) | Yes (`h264_amf`) |
+| **H.265 / HEVC** | Yes (`libx265`) | Yes (`hevc_qsv`) | Yes (`hevc_nvenc`) | Yes (`hevc_amf`) |
 | **VP9** | Yes (`libvpx-vp9`) | No | No | No |
-| **AV1** | Yes (`libsvtav1`) | Yes (`av1_qsv`) | No | No |
+| **AV1** | Yes (`libsvtav1`) | Yes (`av1_qsv`) | Yes (`av1_nvenc`) | Yes (`av1_amf`) |
 
 - **Intel Quick Sync Video (QSV)**: Fully supported for H.264, H.265, and AV1 encoding. Make sure to map `/dev/dri:/dev/dri` in Docker (included in default compose configurations).
-- **NVIDIA (NVENC) / AMD (AMF)**: Not natively supported inside the container image. If you use NVIDIA or AMD graphics, you must stick to standard software (CPU) encoding.
+- **NVIDIA NVENC**: Fully supported for H.264, H.265, and AV1 encoding. Requires host graphics drivers, `nvidia-container-toolkit` installed on the host, and setting the GPU device resource reservations under the `transcodarr` service in `docker-compose.yml`.
+- **AMD AMF**: Fully supported for H.264, H.265, and AV1 encoding. Requires host VAAPI/dri mapping (`/dev/dri:/dev/dri` in compose configurations).
 
 ## Tech Stack
 

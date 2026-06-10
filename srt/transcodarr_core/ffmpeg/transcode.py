@@ -30,6 +30,12 @@ _VIDEO_ENCODER = {
     "h264_qsv": "h264_qsv",
     "hevc_qsv": "hevc_qsv",
     "av1_qsv": "av1_qsv",
+    "h264_nvenc": "h264_nvenc",
+    "hevc_nvenc": "hevc_nvenc",
+    "av1_nvenc": "av1_nvenc",
+    "h264_amf": "h264_amf",
+    "hevc_amf": "hevc_amf",
+    "av1_amf": "av1_amf",
 }
 
 _AUDIO_ENCODER = {
@@ -96,6 +102,26 @@ def _video_encoder_args(codec: str, preset: str, profile: str, crf: str, threads
             args += ["-preset", preset]
         if codec == "h264_qsv" and profile:
             args += ["-profile:v", profile]
+    elif codec in ("h264_nvenc", "hevc_nvenc", "av1_nvenc"):
+        if crf:
+            args += ["-rc", "vbr", "-cq", crf]
+        if preset:
+            args += ["-preset", preset]
+        if codec == "h264_nvenc" and profile:
+            args += ["-profile:v", profile]
+    elif codec in ("h264_amf", "hevc_amf", "av1_amf"):
+        if crf:
+            args += ["-rc", "cqp", "-qp_i", crf, "-qp_p", crf, "-qp_b", crf]
+        if preset:
+            # Map standard presets to AMF presets (speed, balanced, quality)
+            amf_preset = "balanced"
+            if preset in ("ultrafast", "superfast", "veryfast", "faster"):
+                amf_preset = "speed"
+            elif preset in ("slow", "slower", "veryslow"):
+                amf_preset = "quality"
+            args += ["-quality", amf_preset]
+        if codec == "h264_amf" and profile:
+            args += ["-profile:v", profile]
     else:
         if preset:
             args += ["-preset", preset]
@@ -129,6 +155,10 @@ def _resolve_hdr_action(hdr_mode: str, video_codec: str) -> str:
     mode = (hdr_mode or "auto").lower()
     codec = (video_codec or "h264").lower()
     if codec.endswith("_qsv"):
+        codec = codec[:-4]
+    elif codec.endswith("_nvenc"):
+        codec = codec[:-6]
+    elif codec.endswith("_amf"):
         codec = codec[:-4]
     if mode == "tonemap":
         return "tonemap"

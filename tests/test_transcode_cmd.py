@@ -169,6 +169,56 @@ def test_video_args_qsv_av1():
     assert "lp=8" not in args
 
 
+def test_video_args_nvenc_h264():
+    args = _video_encoder_args("h264_nvenc", "slow", "high", "23", "4")
+    assert args[:2] == ["-c:v", "h264_nvenc"]
+    assert "-rc" in args
+    assert "vbr" in args
+    assert "-cq" in args
+    assert "23" in args
+    assert "-preset" in args
+    assert "slow" in args
+    assert "-profile:v" in args
+    assert "high" in args
+    assert "-x264-params" not in args
+
+
+def test_video_args_nvenc_hevc():
+    args = _video_encoder_args("hevc_nvenc", "fast", "", "26", "")
+    assert args[:2] == ["-c:v", "hevc_nvenc"]
+    assert "-rc" in args
+    assert "vbr" in args
+    assert "-cq" in args
+    assert "26" in args
+    assert "-preset" in args
+    assert "fast" in args
+    assert "-x265-params" not in args
+
+
+def test_video_args_amf_h264():
+    args = _video_encoder_args("h264_amf", "slow", "high", "23", "4")
+    assert args[:2] == ["-c:v", "h264_amf"]
+    assert "-rc" in args
+    assert "cqp" in args
+    assert "-qp_i" in args
+    assert "23" in args
+    assert "-quality" in args
+    assert "quality" in args
+    assert "-profile:v" in args
+    assert "high" in args
+
+
+def test_video_args_amf_av1():
+    args = _video_encoder_args("av1_amf", "veryfast", "", "28", "")
+    assert args[:2] == ["-c:v", "av1_amf"]
+    assert "-rc" in args
+    assert "cqp" in args
+    assert "-qp_i" in args
+    assert "28" in args
+    assert "-quality" in args
+    assert "speed" in args
+
+
 # ── _audio_encoder_args unit tests ──────────────────────────────────────────
 
 def test_audio_args_aac():
@@ -223,6 +273,22 @@ def test_hdr_auto_passthrough_for_hevc_qsv():
 
 def test_hdr_auto_passthrough_for_av1_qsv():
     assert _resolve_hdr_action("auto", "av1_qsv") == "passthrough"
+
+
+def test_hdr_auto_tonemaps_for_h264_nvenc():
+    assert _resolve_hdr_action("auto", "h264_nvenc") == "tonemap"
+
+
+def test_hdr_auto_passthrough_for_hevc_nvenc():
+    assert _resolve_hdr_action("auto", "hevc_nvenc") == "passthrough"
+
+
+def test_hdr_auto_tonemaps_for_h264_amf():
+    assert _resolve_hdr_action("auto", "h264_amf") == "tonemap"
+
+
+def test_hdr_auto_passthrough_for_hevc_amf():
+    assert _resolve_hdr_action("auto", "hevc_amf") == "passthrough"
 
 
 def test_hdr_explicit_tonemap_forces_tonemap():
