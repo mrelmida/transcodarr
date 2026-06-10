@@ -27,6 +27,9 @@ _VIDEO_ENCODER = {
     "hevc": "libx265",
     "vp9":  "libvpx-vp9",
     "av1":  "libsvtav1",
+    "h264_qsv": "h264_qsv",
+    "hevc_qsv": "hevc_qsv",
+    "av1_qsv": "av1_qsv",
 }
 
 _AUDIO_ENCODER = {
@@ -86,6 +89,13 @@ def _video_encoder_args(codec: str, preset: str, profile: str, crf: str, threads
             args += ["-crf", crf, "-b:v", "0"]
         if threads:
             args += ["-svtav1-params", f"lp={threads}"]
+    elif codec in ("h264_qsv", "hevc_qsv", "av1_qsv"):
+        if crf:
+            args += ["-rc", "icq", "-global_quality", crf]
+        if preset:
+            args += ["-preset", preset]
+        if codec == "h264_qsv" and profile:
+            args += ["-profile:v", profile]
     else:
         if preset:
             args += ["-preset", preset]
@@ -118,6 +128,8 @@ def _resolve_hdr_action(hdr_mode: str, video_codec: str) -> str:
     """
     mode = (hdr_mode or "auto").lower()
     codec = (video_codec or "h264").lower()
+    if codec.endswith("_qsv"):
+        codec = codec[:-4]
     if mode == "tonemap":
         return "tonemap"
     if mode == "passthrough":

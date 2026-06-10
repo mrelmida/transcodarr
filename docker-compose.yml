@@ -4,6 +4,8 @@ services:
     container_name: transcodarr
     ports:
       - "5025:5025"
+    devices:
+      - /dev/dri:/dev/dri
     env_file: .env
     volumes:
       - ${MOVIES_WATCH_PATH:?Set MOVIES_WATCH_PATH}:/watch/movies

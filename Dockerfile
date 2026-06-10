@@ -1,8 +1,19 @@
 FROM python:3.11-bookworm
 
-# Install ffmpeg (bookworm includes zscale via libzimg2 for HDR tone mapping)
+# Enable non-free components in apt repositories (needed for intel-media-va-driver-non-free)
+RUN sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list
+
+# Install ffmpeg, Intel QSV drivers, VAAPI libraries, and verification tools
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg libzimg2 && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libzimg2 \
+        intel-media-va-driver-non-free \
+        libmfx1 \
+        libvpl2 \
+        va-driver-all \
+        vainfo && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

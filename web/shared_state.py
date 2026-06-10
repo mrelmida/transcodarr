@@ -134,6 +134,9 @@ SETTINGS_SCHEMA = {
                 {"value": "h265", "label": "H.265 (x265)"},
                 {"value": "vp9", "label": "VP9"},
                 {"value": "av1", "label": "AV1"},
+                {"value": "h264_qsv", "label": "H.264 (Intel QSV - GPU)"},
+                {"value": "hevc_qsv", "label": "H.265/HEVC (Intel QSV - GPU)"},
+                {"value": "av1_qsv", "label": "AV1 (Intel QSV - GPU)"},
             ]},
             "TARGET_AUDIO_CODEC": {"label": "Audio Codec", "type": "select", "group": "audio", "options": [
                 {"value": "aac", "label": "AAC"},

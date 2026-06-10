@@ -107,7 +107,10 @@ def file_needs_transcode(file_path):
             ], capture_output=True, text=True)
 
             video_info = result.stdout
-            if target_video_codec not in video_info:
+            base_codec = target_video_codec[:-4] if target_video_codec.endswith("_qsv") else target_video_codec
+            if base_codec == "h265":
+                base_codec = "hevc"
+            if base_codec not in video_info:
                 return True
 
             # Skip resolution check when set to "source" (match any resolution)

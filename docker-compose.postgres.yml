@@ -15,6 +15,8 @@ services:
     container_name: transcodarr
     ports:
       - "5025:5025"
+    devices:
+      - /dev/dri:/dev/dri
     env_file: .env
     volumes:
       - ${PROCESSING_PATH:?Set PROCESSING_PATH}:/downloads
