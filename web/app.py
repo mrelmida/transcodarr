@@ -82,6 +82,34 @@ async def lifespan(app: FastAPI):
     app.state.worker_pool = worker_pool
     set_worker_pool(worker_pool)
 
+    # Auto-start watchdog at boot when AUTO_WORKERS > 0.
+    # Mirrors POST /api/start body; tolerates a stale /tmp/transcodarr.run lock
+    # left behind if a previous process exited without releasing it.
+    if init_aw > 0:
+        try:
+            from threading import Thread
+            from web.shared_state import _state, acquire_run_lock, _bg
+
+            try:
+                acquire_run_lock(app.state.run_lock_path)
+            except FileExistsError:
+                logging.warning("[STARTUP] Stale run lock %s found, removing", app.state.run_lock_path)
+                os.remove(app.state.run_lock_path)
+                acquire_run_lock(app.state.run_lock_path)
+
+            from transcodarr_core.config import get_setting
+            debounce_sec = float(get_setting("WATCH_DEBOUNCE_SEC", 20.0))
+            t = Thread(
+                target=_bg,
+                args=(s, get_stop_flag, set_stop_flag, app.state.run_lock_path, debounce_sec),
+                daemon=True,
+            )
+            _state["thread"] = t
+            t.start()
+            logging.info("[STARTUP] Watchdog auto-started (AUTO_WORKERS=%d, debounce=%.1fs)", init_aw, debounce_sec)
+        except Exception as e:
+            logging.error("[STARTUP] Failed to auto-start watchdog: %s", e)
+
     # Start system stats collector
     start_stats_collector()
 
